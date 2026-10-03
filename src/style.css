@@ -16,10 +16,11 @@ html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  /* 空のグラデーション、白い丸いマット、マットに落ちる立体の影（3D の外で描くので描く負荷が無い） */
+  /* 空のグラデーション、白い丸いマット、マットに落ちる立体の影（3D の外で描くので描く負荷が無い）。
+     マットと影の位置と大きさは main.js が立体の見かけの大きさから入れる（--mat-* / --shade-*） */
   background:
-    radial-gradient(ellipse 36% 5% at 50% 77%, var(--shade), transparent),
-    radial-gradient(ellipse 84% 14% at 50% 82%, var(--mat) 97%, transparent 100%),
+    radial-gradient(var(--shade-rx, 36%) var(--shade-ry, 5%) at 50% var(--shade-y, 77%), var(--shade), transparent),
+    radial-gradient(var(--mat-rx, 84%) var(--mat-ry, 14%) at 50% var(--mat-y, 82%), var(--mat) 97%, transparent 100%),
     linear-gradient(var(--sky-top), var(--sky-mid) 62%, var(--sky-bottom));
   background-color: var(--sky-mid);
   color: var(--ink);
@@ -108,8 +109,43 @@ button {
   box-shadow: none;
 }
 .box.empty .hole { visibility: hidden; }
-.box.done { transform: scale(0.6) translateY(-20px); opacity: 0; }
-.box.spawn { animation: pop 0.25s ease-out; }
+/* 満杯の箱: ふたが上から閉まり（closing）、はずんで上へ抜ける（done）。時間は effects.js の FX.box */
+.box::after {
+  content: "✓";
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 30px;
+  font-weight: 900;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.18);
+  position: absolute;
+  inset: -3px;
+  border-radius: 16px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.45), transparent 55%),
+    var(--c, #bbb);
+  box-shadow: inset 0 -4px 0 rgba(0, 0, 0, 0.12);
+  opacity: 0;
+  transform: translateY(-26px) scaleY(0.6);
+  transform-origin: top;
+  pointer-events: none;
+}
+.box.closing::after {
+  opacity: 1;
+  transform: none;
+  transition: transform 0.16s cubic-bezier(0.3, 1.5, 0.6, 1), opacity 0.08s;
+}
+.box.closing { animation: thump 0.3s 0.13s ease-out; }
+@keyframes thump {
+  30% { transform: scale(1.08, 0.92); }
+  60% { transform: scale(0.97, 1.03); }
+}
+.box.done {
+  transform: scale(0.6) translateY(-28px);
+  opacity: 0;
+  transition: transform 0.22s cubic-bezier(0.5, -0.4, 0.8, 0.6), opacity 0.22s;
+}
+.box.spawn { animation: pop 0.2s ease-out; }
 @keyframes pop {
   from { transform: scale(0.5); opacity: 0; }
   to { transform: scale(1); opacity: 1; }
@@ -133,6 +169,12 @@ button {
 }
 #slots.warn { background: #ffc9bd; }
 .slot { width: 34px; height: 34px; }
+/* 印が入った穴がはずむ */
+.land { animation: land 0.22s ease-out; }
+@keyframes land {
+  40% { transform: scale(1.18); }
+  70% { transform: scale(0.94); }
+}
 /* 入っているねじ（上から見たキャップボルトの頭: ローレットの縁、艶、暗い六角穴） */
 .dot {
   position: relative;
@@ -209,6 +251,40 @@ button {
   width: 30px;
   height: 30px;
   margin: -15px 0 0 -15px;
+}
+
+/* ねじが抜けた所のポンという白い輪 */
+.puff {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--s);
+  height: var(--s);
+  margin: calc(var(--s) / -2) 0 0 calc(var(--s) / -2);
+  border-radius: 50%;
+  border: 4px solid color-mix(in srgb, var(--c, #fff) 45%, #fff);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.7);
+  animation: puff 0.32s ease-out forwards;
+}
+@keyframes puff {
+  from { scale: 0.4; opacity: 1; }
+  to { scale: 1.3; opacity: 0; }
+}
+/* 満杯の箱から散る星 */
+.spark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  background: var(--accent);
+  clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
+  animation: spark 0.5s ease-out forwards;
+}
+@keyframes spark {
+  from { translate: 0 0; scale: 0.4; opacity: 1; }
+  to { translate: var(--dx) var(--dy); scale: 1.1; opacity: 0; }
 }
 
 /* クリアと詰み */

@@ -12,6 +12,7 @@ import { BOX_LEVEL } from './levels/box.js';
 import { stageLevel, START_VIEW as START_EULER } from './stages.js';
 import { createProgress, deviceStorage } from './progress.js';
 import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
+import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf } from './effects.js';
 
 // 既定はステージの進行（到達したステージから始める）。
 // ?seed=番号（と &kind=box|shelf|table）なら生成した盤面を1つだけ遊ぶ（進行は保存しない）。
@@ -154,7 +155,26 @@ function resize() {
   hudOffset = $('hud').getBoundingClientRect().height;
   camera.setViewOffset(w, h, 0, -hudOffset * 0.3, w, h);
   camera.updateProjectionMatrix();
+  placeGround();
   requestRender();
+}
+
+// マットと影（CSS の背景）を立体の真下に置く。立体を包む球の見かけの大きさで決めるので、寄り引きと盤面の大きさに付いてくる。
+// 回したときは動かさない（球は回しても同じ。背景を毎フレーム描き直さない）
+let boardRadius = 5;
+const rootStyle = document.documentElement.style;
+function placeGround() {
+  camera.updateMatrixWorld();
+  const c = screenOfPoint(new THREE.Vector3(0, 0, 0));
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(boardRadius);
+  const R = Math.hypot(...screenOfPoint(right).map((v, i) => v - c[i]));
+  const g = groundOf(c[1], R);
+  rootStyle.setProperty('--mat-y', `${g.matY.toFixed(1)}px`);
+  rootStyle.setProperty('--mat-rx', `${g.matRx.toFixed(1)}px`);
+  rootStyle.setProperty('--mat-ry', `${g.matRy.toFixed(1)}px`);
+  rootStyle.setProperty('--shade-y', `${g.shadeY.toFixed(1)}px`);
+  rootStyle.setProperty('--shade-rx', `${g.shadeRx.toFixed(1)}px`);
+  rootStyle.setProperty('--shade-ry', `${g.shadeRy.toFixed(1)}px`);
 }
 window.addEventListener('resize', resize);
 
@@ -173,6 +193,7 @@ function rotateBy(dx, dy) {
 function zoomBy(scale) {
   distance = zoomDistance(distance, scale, ZOOM.min, ZOOM.max);
   camera.position.set(0, 0, distance);
+  placeGround();
   requestRender();
 }
 
@@ -187,23 +208,43 @@ function goHome() {
     model.quaternion.slerpQuaternions(from, to, e);
     distance = d0 + (START_DISTANCE - d0) * e;
     camera.position.set(0, 0, distance);
+    placeGround();
   });
   homing = t;
 }
 
 // ---- 時間で動くもの（ねじが抜ける、震える、板が落ちる） ----
 
+// 演出の時計。ふだんは実時間で、スクリーンショットのスクリプトが遅くしたり止めたりできる（__app.timeScale）
+let timeScale = 1, timeBase = 0, realBase = 0;
+const fxClock = () => timeBase + (performance.now() - realBase) * timeScale;
+function setTimeScale(k) {
+  timeBase = fxClock();
+  realBase = performance.now();
+  timeScale = k;
+}
+
 const tweens = new Set();
 function tween(duration, update, done) {
-  const t = { start: performance.now(), duration, update, done };
+  const t = { start: fxClock(), duration, update, done };
   wake();
   tweens.add(t);
   requestRender();
   return t;
 }
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// 演出の時計で ms 待つ（ふだんは setTimeout 1回。時計を遅くしたり止めたりしている間は、それに合わせて待つ）
+const wait = (ms) => new Promise((r) => {
+  const end = fxClock() + ms;
+  const tick = () => {
+    const left = end - fxClock();
+    if (left <= 0) r();
+    else setTimeout(tick, timeScale > 0 ? left / timeScale : 50);
+  };
+  tick();
+});
 
-function runTweens(now) {
+function runTweens() {
+  const now = fxClock();
   for (const t of tweens) {
     const k = Math.min(1, (now - t.start) / t.duration);
     t.update(k);
@@ -214,24 +255,27 @@ function runTweens(now) {
   }
 }
 
-// ねじが回りながら抜ける向きへ少し抜ける。抜けきったら resolve する。
+// ねじが回りながら抜ける（右ねじなので頭から見て反時計回り、1回転でピッチ1つ分）。抜けきったら resolve する。
 // 消すのはここではなく、箱やスロットへ飛ばす直前（launch）。外したねじは画面に1本しか出さない
 function unscrew(obj) {
   const p0 = obj.position.clone();
   const out = new THREE.Vector3(0, 1, 0).applyQuaternion(obj.quaternion);
   const q0 = obj.quaternion.clone();
   const spin = new THREE.Quaternion();
-  return new Promise((done) => tween(220, (k) => {
-    const e = 1 - (1 - k) * (1 - k);
-    obj.position.copy(p0).addScaledVector(out, 0.5 * e);
-    spin.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -e * Math.PI * 3);
-    obj.quaternion.copy(q0).multiply(spin);
+  const yAxis = new THREE.Vector3(0, 1, 0);
+  const r = obj.userData.radius;
+  return new Promise((done) => tween(FX.unscrew.ms, (k) => {
+    const { lift, angle, scale } = unscrewPose(k, r);
+    obj.position.copy(p0).addScaledVector(out, lift);
+    obj.quaternion.copy(q0).multiply(spin.setFromAxisAngle(yAxis, angle));
+    obj.scale.setScalar(scale);
+    obj.userData.lift = lift;   // スクリーンショットのスクリプトが抜けた量を見る
   }, done));
 }
 
 // 抜けたねじを画面の印へ持ち替える。立体のねじを消し、その位置と見かけの大きさ（印の何倍か）を返す
 const FLYER_PX = 30;   // style.css の .flyer の大きさ
-function launch(obj) {
+function launch(obj, color) {
   const at = screenOf(obj);
   const c = new THREE.Vector3(), w = new THREE.Vector3();
   obj.getWorldPosition(c);
@@ -239,6 +283,7 @@ function launch(obj) {
   const edge = c.clone().addScaledVector(new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion), obj.userData.radius * w.x);
   const px = 2 * Math.hypot(...screenOfPoint(edge).map((v, i) => v - at[i]));
   obj.visible = false;
+  puff(at, px, color);
   requestRender();
   return { at, scale: Math.min(2, Math.max(0.6, px / FLYER_PX)) };
 }
@@ -257,19 +302,41 @@ function shake(obj) {
   });
 }
 
-// 物理で盤面の外まで落ちきった板は、立体から外して画面の下へ落とし、消す
+// 最後のねじが抜けた板は、ぷくっと膨らんで白く光る（はじける）。見た目だけで、物理の形や動きは変えない。
+// 材質は板ごとに1つ（scene.js）なので、光らせても描く回数は増えない
+function burst(obj) {
+  const mat = obj.material;
+  const glow = mat.emissive.clone().set(0xffffff);
+  tween(FX.burst.ms, (k) => {
+    const { scale, glow: g } = burstPose(k);
+    obj.scale.setScalar(scale);
+    mat.emissive.copy(glow).multiplyScalar(g);
+  }, () => {
+    obj.scale.setScalar(1);
+    mat.emissive.setScalar(0);
+  });
+}
+
+// 物理で盤面の外まで落ちきった板は、立体から外して画面の下へ回りながら落とし、消す。
+// 画面の中心から遠ざかる向きへ流す
 function dropPlate(obj) {
   scene.attach(obj);   // 立体の回転から外し、世界の下（画面の下）へ落とす
-  const y0 = obj.position.y;
+  const p0 = obj.position.clone(), q0 = obj.quaternion.clone();
+  const side = p0.x < 0 ? -1 : 1;
+  // 回す軸は画面の奥行き（z）と横（x）の間。板ごとに少しずつ変える
+  const axisOf = new THREE.Vector3(0.5, 0.2 * side, 1).normalize();
+  const spin = new THREE.Quaternion();
   const mats = [];
   obj.traverse((o) => o.material && mats.push(o.material));
   for (const m of mats) {
     m.transparent = true;   // 板はふだん不透明で描いている（scene.js）。消えるときだけ透明にする
     m.needsUpdate = true;
   }
-  tween(900, (k) => {
-    obj.position.y = y0 - 26 * k * k;
-    for (const m of mats) m.opacity = (m.userData.opacity0 ??= m.opacity) * Math.min(1, 2.2 - 2.2 * k);
+  tween(FX.drop.ms, (k) => {
+    const { down, side: dx, angle, opacity } = dropPose(k, side);
+    obj.position.set(p0.x + dx, p0.y - down, p0.z);
+    obj.quaternion.copy(q0).premultiply(spin.setFromAxisAngle(axisOf, -angle));
+    for (const m of mats) m.opacity = (m.userData.opacity0 ??= m.opacity) * opacity;
   }, () => {
     scene.remove(obj);
   });
@@ -315,17 +382,49 @@ const centerOf = (el) => {
   return [r.left + r.width / 2, r.top + r.height / 2];
 };
 
-// 画面の from から to へ、ねじの印を飛ばす
+// 画面の from から to へ、ねじの印を回しながら飛ばす
 function fly(color, from, to, ms, scale = 1.25) {
   const el = dot(color);
   el.classList.add('flyer');
   $('flyers').append(el);
-  const anim = el.animate([
-    { transform: `translate(${from[0]}px, ${from[1]}px) scale(${scale})` },
-    { transform: `translate(${(from[0] + to[0]) / 2}px, ${Math.min(from[1], to[1]) - 30}px) scale(${(scale + 1) / 2})`, offset: 0.45 },
-    { transform: `translate(${to[0]}px, ${to[1]}px) scale(1)` },
-  ], { duration: ms, easing: 'ease-in-out', fill: 'forwards' });
+  const anim = el.animate(flyFrames(from, to, scale), { duration: ms, easing: 'ease-in-out', fill: 'forwards' });
   return anim.finished.then(() => el.remove(), () => el.remove());
+}
+
+// 印が入った穴をはずませる（HUD を描き直した後の要素に付ける）
+function landAt(ev, before) {
+  const el = ev.type === 'toSlot' ? slotsEl.children[ev.slot]
+    : ev.type === 'toBox' || ev.type === 'slotToBox' ? boxesEl.children[ev.box]?.children[before.boxes[ev.box].n]
+    : null;
+  el?.classList.add('land');
+}
+
+// 立体のねじが消えた所に、ポンと白い輪を出す（DOM なので 3D の描く回数は増えない）
+function puff(at, px, color) {
+  const el = document.createElement('div');
+  el.className = 'puff';
+  if (color) el.style.setProperty('--c', cssColor(color));
+  el.style.setProperty('--s', `${Math.max(24, px * 1.6)}px`);
+  el.style.left = `${at[0]}px`;
+  el.style.top = `${at[1]}px`;
+  $('flyers').append(el);
+  el.addEventListener('animationend', () => el.remove());
+}
+
+// 満杯の箱から星を散らす
+function sparkle(el) {
+  const [x, y] = centerOf(el);
+  for (let i = 0; i < 6; i++) {
+    const s = document.createElement('div');
+    s.className = 'spark';
+    const a = (i / 6) * Math.PI * 2 + 0.3;
+    s.style.left = `${x}px`;
+    s.style.top = `${y}px`;
+    s.style.setProperty('--dx', `${Math.cos(a) * 46}px`);
+    s.style.setProperty('--dy', `${Math.sin(a) * 30}px`);
+    $('flyers').append(s);
+    s.addEventListener('animationend', () => s.remove());
+  }
 }
 
 let flashTimer = 0;
@@ -379,23 +478,34 @@ async function play() {
           : slotsEl.children[ev.slot];
         await batch.out;   // 抜けきるまで待ち、立体のねじを消すのと同時に印を飛ばす
         if (gen !== generation) break;
-        const { at, scale } = launch(batch.obj);
-        await fly(colorOf.get(ev.screw), at, centerOf(target), 380 * fast, scale);
+        const { at, scale } = launch(batch.obj, colorOf.get(ev.screw));
+        await fly(colorOf.get(ev.screw), at, centerOf(target), FX.fly.ms * fast, scale);
       } else if (ev.type === 'slotToBox') {
         const from = centerOf(slotsEl.children[ev.slot]);
         const to = centerOf(boxesEl.children[ev.box].children[before.boxes[ev.box].n]);
         slotsEl.children[ev.slot].replaceChildren();
-        await fly(colorOf.get(ev.screw), from, to, 300 * fast);
+        await fly(colorOf.get(ev.screw), from, to, FX.fly.slotMs * fast, 1);
       } else if (ev.type === 'boxFull') {
-        await wait(120 * fast);
-        boxesEl.children[ev.box].classList.add('done');
-        await wait(220 * fast);
+        // ふたが閉まりきる瞬間に音と振動、星を散らして箱は上へ抜ける
+        const el = boxesEl.children[ev.box];
+        const tl = boxCloseTimeline(fast);
+        await wait(tl.lid);
+        el.classList.add('closing');
+        await wait(tl.cue - tl.lid);
+        if (gen !== generation) break;
+        feedback.cue('boxFull');
+        sparkle(el);
+        await wait(tl.leave - tl.cue);
+        el.classList.add('done');
+        await wait(tl.end - tl.leave);
       }
       if (gen !== generation) break;
-      if (ev.type !== 'plate') feedback.cue(eventCue(ev));   // 板の落ちる音はタップの瞬間に鳴らしている
+      // 板の落ちる音はタップの瞬間に、箱が閉まる音はふたが閉まる瞬間に鳴らしている
+      if (ev.type !== 'plate' && ev.type !== 'boxFull') feedback.cue(eventCue(ev));
       hud = after;
       renderHud(hud, ev.type === 'boxSpawn' ? ev.box : -1);
-      if (ev.type === 'boxSpawn') await wait(200 * fast);
+      landAt(ev, before);
+      if (ev.type === 'boxSpawn') await wait(FX.box.spawn * fast);
     }
     if (gen === generation && batch.obj.visible) launch(batch.obj);   // 箱にもスロットにも飛ばなかったときの念のため
     if (gen === generation && batch.status !== 'playing' && !queue.length) showEnd(batch.status);
@@ -421,7 +531,9 @@ function tapScrew(id) {
   } else if (r.reason === 'ok') {
     const out = unscrew(obj);
     syncPlates(physics, game.state);   // 1本になった板はぶら下がり、0本の板は落ち始める
-    if (r.events.some((ev) => eventCue(ev) === 'plate')) feedback.cue('plate');
+    const fallen = r.events.filter((ev) => eventCue(ev) === 'plate');
+    for (const ev of fallen) burst(board.plates.get(ev.plate));
+    if (fallen.length) feedback.cue('plate');
     requestRender();
     queue.push({ events: r.events, obj, out, status: r.status });
     play();
@@ -491,6 +603,8 @@ function restart() {
   }
   board = buildBoard(LEVEL);
   model.add(board.root);
+  boardRadius = new THREE.Box3().setFromObject(board.root).getBoundingSphere(new THREE.Sphere()).radius;
+  placeGround();
   physics?.free();
   physics = createPhysics(LEVEL);
   stepClock = 0;
@@ -638,7 +752,7 @@ function frame(now) {
   framePending = false;
   stepPhysics(now);
   if (tweens.size) {
-    runTweens(now);
+    runTweens();
     needsRender = true;
   }
   if (needsRender) {
@@ -680,6 +794,19 @@ window.__app = {
   tapScrew,
   screenOf: (id) => screenOf(board.screws.get(id)),
   screwShown: (id) => board.screws.get(id).visible,
+  screw: (id) => board.screws.get(id),
+  // 演出の途中を撮るため: 演出の時計を遅くする（0 で止める）。CSS のアニメーションも止める・戻す
+  timeScale(k) {
+    setTimeScale(k);
+    for (const a of document.getAnimations()) {
+      if (k === 0) a.pause();
+      else {
+        a.playbackRate = k;
+        a.play();
+      }
+    }
+    requestRender();
+  },
   visibleScrews,
   legal: () => game.legal(),
   // 生成した盤面の、解ける手順
