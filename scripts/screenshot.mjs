@@ -28,6 +28,12 @@
 //   size-<名前>-cleared.png 同じ盤面をクリアした画面
 //   あわせて、ねじの中心から少し外れた所のタップで外れること、「向きを戻す」で最初の向きに戻ること、
 //   音と振動の切り替えが再読み込みの後も残ることを確かめる
+//   （分解の演出、D2。生成した箱 ?seed=4&kind=box を手順どおりに外しながら）
+//   fx-unscrew.png   ねじが回りながら抜けている途中の拡大（ねじ部が見える）
+//   fx-burst.png     最後のねじが抜けた板がぷくっと膨らんで光ったところ
+//   fx-box.png       満杯の箱のふたが閉まり、星が散ったところ
+//   fx-drop.png      盤面の外へ落ちた板が回りながら画面の下へ消えていくところ
+//   あわせて、演出の後に立体の描く物の数が増えていない（板が消えた分だけ減る）ことを確かめる
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -37,7 +43,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,stage,size で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ
+// SHOTS=box,gen,stage,size,fx で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ、fx は分解の演出
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -447,6 +453,93 @@ async function sizeShots(browser, errors, outside) {
   }
 }
 
+
+// 分解の演出（D2）。生成した箱を手順どおりに外しながら、それぞれの演出の途中を撮る
+async function fxShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const save = async (name, clip) => {
+    const path = join(outDir, `${name}.png`);
+    await page.screenshot({ path, clip });
+    console.log(`screenshot: ${path}`);
+  };
+  // 立体で描く物（Mesh）の数。演出で立体を足していないことを確かめる
+  const meshCount = () => page.evaluate(() => {
+    let n = 0;
+    window.__app.model.parent.traverse((o) => { if (o.isMesh && o.visible) n++; });
+    return n;
+  });
+  await page.goto(url + '?seed=4&kind=box');
+  await waitRendered(page);
+  const before = await meshCount();
+  const path = await page.evaluate(() => window.__app.solution);
+  const want = new Set(['fx-unscrew', 'fx-burst', 'fx-box', 'fx-drop']);
+  let k = 0;
+  for (const id of path) {
+    if (!want.size) break;
+    let reason;
+    const seen = await page.evaluate((id) => window.__app.visibleScrews().some((s) => s.id === id), id);
+    // 抜ける途中を撮るときは、演出の時計を 1/20 の速さにしておく
+    if (want.has('fx-unscrew') && seen) await page.evaluate(() => window.__app.timeScale(0.05));
+    for (let tries = 0; ; tries++) {
+      reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
+      if (reason === 'ok' || reason === 'gone') break;
+      if (reason !== 'blocked' || tries >= 12) throw new Error(`手順のねじ ${id} を外せない: ${reason}`);
+      await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k++ % VIEWS.length]);
+      await waitRendered(page);
+    }
+    if (reason !== 'ok') continue;
+    if (want.has('fx-unscrew') && seen) {
+      // 抜け始めて、ねじ部が板から出たところ（立体のねじがまだ見えている間）
+      const [x, y] = await page.evaluate((id) => window.__app.screenOf(id), id);
+      const ok = await page.waitForFunction((id) => {
+        const s = window.__app.screw(id);
+        return s.visible && s.scale.x === 1 && s.userData.lift > 0.14;
+      }, id, { timeout: 10000, polling: 'raf' }).then(() => true, () => false);
+      if (ok) {
+        await page.evaluate(() => window.__app.timeScale(0));
+        await save('fx-unscrew', { x: x - 80, y: y - 100, width: 160, height: 160 });
+        want.delete('fx-unscrew');
+      }
+      await page.evaluate(() => window.__app.timeScale(1));
+    }
+    const shot = await Promise.race([
+      page.waitForFunction(() => {
+        let swollen = false;
+        window.__app.model.traverse((o) => { if (o.userData.plateId && o.scale.x > 1.04) swollen = true; });
+        return swollen;
+      }, null, { timeout: 3000, polling: 'raf' }).then(() => 'fx-burst', () => null),
+      page.waitForFunction(() => document.querySelector('#boxes .box.closing'), null, { timeout: 3000, polling: 'raf' }).then(() => 'fx-box', () => null),
+      page.waitForFunction(() => window.__app.model.parent.children.some((o) => o.userData.plateId && o.position.y < -2), null, { timeout: 3000, polling: 'raf' }).then(() => 'fx-drop', () => null),
+    ]);
+    if (shot && want.has(shot)) {
+      // 演出の時計と CSS のアニメーションを止めて撮る（ヘッドレスの描画は遅く、撮る間に先へ進んでしまう）
+      await page.evaluate(() => window.__app.timeScale(0));
+      if (shot === 'fx-box') {
+        // ふたは閉まりきった所まで進めて撮る（止めた時計では動かないので、ふたの動きだけ終わらせる）
+        await page.waitForFunction(() => document.querySelector('#boxes .box.closing').getAnimations({ subtree: true }).length, null, { polling: 'raf' });
+        await page.evaluate(() => {
+          for (const a of document.querySelector('#boxes .box.closing').getAnimations({ subtree: true })) if (a.effect?.pseudoElement === '::after') a.finish();
+        });
+        const lid = await page.evaluate(() => getComputedStyle(document.querySelector('#boxes .box.closing'), '::after').opacity);
+        if (lid !== '1') throw new Error(`箱のふたが閉まっていない: ${lid}`);
+      }
+      await save(shot);
+      await page.evaluate(() => window.__app.timeScale(1));
+      want.delete(shot);
+    }
+    await waitRendered(page);
+  }
+  if (want.size) throw new Error(`演出を撮れなかった: ${[...want].join(', ')}`);
+  await playSolution(page);
+  await waitRendered(page);
+  const after = await meshCount();
+  if (after > before) throw new Error(`演出の後に立体で描く物が増えた: ${before} → ${after}`);
+  await context.close();
+}
+
 const server = await serve();
 const url = `http://127.0.0.1:${server.address().port}/`;
 const browser = await chromium.launch({
@@ -487,6 +580,7 @@ try {
     console.log(`screenshot: ${file}`);
   }
   await context.close();
+  if (only('fx')) await fxShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('size')) await sizeShots(browser, errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);
