@@ -1,35 +1,50 @@
 import * as THREE from 'three';
 import { createGesture } from './gesture.js';
 import { dragRotation, zoomDistance } from './view.js';
-import { createPlaceholderBox } from './placeholder.js';
+import { buildBoard } from './scene.js';
+import { createGame, hudOf, applyEvent } from './game.js';
+import { nearestScrew } from './pick.js';
+import { BOX_LEVEL } from './levels/box.js';
 
-const canvas = document.getElementById('stage');
-const hint = document.getElementById('hint');
+const LEVEL = BOX_LEVEL;
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('stage');
+const hint = $('hint');
+
+// ---- 3D ----
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setClearColor(0xf4ead9);
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
-let distance = 9;
+const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
+// 盤面（外寸 6 の箱）が縦画面の横幅に収まる距離
+const ZOOM = { min: 12, max: 34 };
+let distance = 19;
 camera.position.set(0, 0, distance);
 
-scene.add(new THREE.HemisphereLight(0xfff8ee, 0x8a7a66, 1.6));
-const sun = new THREE.DirectionalLight(0xffffff, 1.6);
-sun.position.set(3, 5, 6);
+scene.add(new THREE.HemisphereLight(0xfff8ee, 0x8a7a66, 1.5));
+const sun = new THREE.DirectionalLight(0xffffff, 1.7);
+sun.position.set(4, 7, 9);
 scene.add(sun);
 
-const model = createPlaceholderBox();
+// 立体はこの group ごと回す。盤面は中に作り直す（やり直し）
+const model = new THREE.Group();
 // 最初は斜め上から見た向きにして、立体だと分かるようにする
 model.quaternion.setFromEuler(new THREE.Euler(0.45, -0.6, 0));
 scene.add(model);
+
+let board = null;
 
 let needsRender = true;
 function requestRender() {
   needsRender = true;
 }
 
+// HUD の高さの分、立体を画面の下寄りに描く
+let hudOffset = 0;
 function resize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
@@ -37,11 +52,12 @@ function resize() {
   camera.aspect = w / h;
   // 縦長の画面では横幅に合わせて立体が収まるよう、縦の画角を広げる
   camera.fov = w < h ? 40 * Math.min(1.6, h / w / 1.2) : 40;
+  hudOffset = $('hud').getBoundingClientRect().height;
+  camera.setViewOffset(w, h, 0, -hudOffset * 0.3, w, h);
   camera.updateProjectionMatrix();
   requestRender();
 }
 window.addEventListener('resize', resize);
-resize();
 
 const axis = new THREE.Vector3();
 const turn = new THREE.Quaternion();
@@ -55,29 +71,299 @@ function rotateBy(dx, dy) {
 }
 
 function zoomBy(scale) {
-  distance = zoomDistance(distance, scale);
+  distance = zoomDistance(distance, scale, ZOOM.min, ZOOM.max);
   camera.position.set(0, 0, distance);
   requestRender();
 }
 
+// ---- 時間で動くもの（ねじが抜ける、震える、板が落ちる） ----
+
+const tweens = new Set();
+function tween(duration, update, done) {
+  const t = { start: performance.now(), duration, update, done };
+  tweens.add(t);
+  requestRender();
+  return t;
+}
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function runTweens(now) {
+  for (const t of tweens) {
+    const k = Math.min(1, (now - t.start) / t.duration);
+    t.update(k);
+    if (k >= 1) {
+      tweens.delete(t);
+      t.done?.();
+    }
+  }
+}
+
+// ねじが回りながら抜けて消える
+function unscrew(obj) {
+  const p0 = obj.position.clone();
+  const out = new THREE.Vector3(0, 1, 0).applyQuaternion(obj.quaternion);
+  const q0 = obj.quaternion.clone();
+  const spin = new THREE.Quaternion();
+  tween(260, (k) => {
+    obj.position.copy(p0).addScaledVector(out, 0.9 * k);
+    spin.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -k * Math.PI * 3);
+    obj.quaternion.copy(q0).multiply(spin);
+    obj.scale.setScalar(1 - 0.4 * k);
+  }, () => { obj.visible = false; });
+}
+
+// 隠れたねじは震えて拒否する
+function shake(obj) {
+  if (obj.userData.shaking) return;
+  obj.userData.shaking = true;
+  const p0 = obj.position.clone();
+  const side = new THREE.Vector3(1, 0, 0).applyQuaternion(obj.quaternion);
+  tween(380, (k) => {
+    obj.position.copy(p0).addScaledVector(side, 0.1 * Math.sin(k * Math.PI * 8) * (1 - k));
+  }, () => {
+    obj.position.copy(p0);
+    obj.userData.shaking = false;
+  });
+}
+
+// ねじ0本の板は、画面の下へ落ちて消える（物理は M5）
+function dropPlate(obj) {
+  scene.attach(obj);   // 立体の回転から外し、世界の下（画面の下）へ落とす
+  const y0 = obj.position.y;
+  const spin = (Math.random() - 0.5) * 1.2;
+  const r0 = obj.rotation.z;
+  const mats = [];
+  obj.traverse((o) => o.material && mats.push(o.material));
+  tween(900, (k) => {
+    obj.position.y = y0 - 26 * k * k;
+    obj.rotation.z = r0 + spin * k;
+    for (const m of mats) m.opacity = (m.userData.opacity0 ??= m.opacity) * Math.min(1, 2.2 - 2.2 * k);
+  }, () => {
+    scene.remove(obj);
+  });
+}
+
+// ---- 画面の上: 箱とスロット ----
+
+const boxesEl = $('boxes');
+const slotsEl = $('slots');
+const cssColor = (c) => `var(--${c}, #999)`;
+
+function dot(color) {
+  const d = document.createElement('div');
+  d.className = 'dot';
+  d.style.setProperty('--c', cssColor(color));
+  return d;
+}
+
+function renderHud(hud, spawned = -1) {
+  boxesEl.replaceChildren(...hud.boxes.map((b, i) => {
+    const el = document.createElement('div');
+    el.className = 'box' + (b ? '' : ' empty') + (i === spawned ? ' spawn' : '');
+    if (b) el.style.setProperty('--c', cssColor(b.color));
+    for (let k = 0; k < 3; k++) {
+      const hole = document.createElement('div');
+      hole.className = 'hole';
+      if (b && k < b.n) hole.append(dot(b.color));
+      el.append(hole);
+    }
+    return el;
+  }));
+  slotsEl.replaceChildren(...hud.slots.map((c) => {
+    const el = document.createElement('div');
+    el.className = 'slot';
+    if (c) el.append(dot(c));
+    return el;
+  }));
+  $('progress').textContent = `${hud.filled} / ${hud.total}`;
+}
+
+const centerOf = (el) => {
+  const r = el.getBoundingClientRect();
+  return [r.left + r.width / 2, r.top + r.height / 2];
+};
+
+// 画面の from から to へ、ねじの印を飛ばす
+function fly(color, from, to, ms) {
+  const el = dot(color);
+  el.classList.add('flyer');
+  $('flyers').append(el);
+  const anim = el.animate([
+    { transform: `translate(${from[0]}px, ${from[1]}px) scale(1.25)` },
+    { transform: `translate(${(from[0] + to[0]) / 2}px, ${Math.min(from[1], to[1]) - 30}px) scale(1.1)`, offset: 0.45 },
+    { transform: `translate(${to[0]}px, ${to[1]}px) scale(1)` },
+  ], { duration: ms, easing: 'ease-in-out', fill: 'forwards' });
+  return anim.finished.then(() => el.remove(), () => el.remove());
+}
+
 let flashTimer = 0;
-function onTap() {
-  // M1 ではタップと判定されたことだけ見せる。ねじを外すのは M4
-  hint.textContent = 'タップ';
-  hint.classList.add('flash');
+function say(text, warn = false) {
+  hint.textContent = text;
+  hint.classList.toggle('flash', warn);
   clearTimeout(flashTimer);
   flashTimer = setTimeout(() => {
-    hint.textContent = '1本指で回す・2本指で拡大';
+    hint.textContent = '1本指で回す・ねじをタップで外す';
     hint.classList.remove('flash');
-  }, 600);
+  }, 1200);
 }
+
+// ---- 1局 ----
+
+const game = createGame(LEVEL);
+const colorOf = new Map(LEVEL.screws.map((s) => [s.id, s.color]));
+let hud = hudOf(game.state);   // いま画面に出している箱とスロット（演出の途中の様子）
+let queue = [];                // まだ見せていない出来事のまとまり { events, from: [x, y], status }
+let playing = false;
+let generation = 0;            // やり直しで古い演出を捨てるための番号
+
+function screenOf(obj) {
+  const p = new THREE.Vector3();
+  obj.getWorldPosition(p).project(camera);
+  return [(p.x + 1) / 2 * window.innerWidth, (1 - p.y) / 2 * window.innerHeight];
+}
+
+// 出来事を順に見せる。続けてタップされて溜まっているときは速める
+async function play() {
+  if (playing) return;
+  playing = true;
+  const gen = generation;
+  while (queue.length && gen === generation) {
+    const batch = queue.shift();
+    for (const ev of batch.events) {
+      const fast = queue.length ? 0.5 : 1;
+      const before = hud;
+      const after = applyEvent(hud, ev, LEVEL);
+      if (ev.type === 'toBox' || ev.type === 'toSlot') {
+        const target = ev.type === 'toBox'
+          ? boxesEl.children[ev.box].children[before.boxes[ev.box].n]
+          : slotsEl.children[ev.slot];
+        await fly(colorOf.get(ev.screw), batch.from, centerOf(target), 380 * fast);
+      } else if (ev.type === 'slotToBox') {
+        const from = centerOf(slotsEl.children[ev.slot]);
+        const to = centerOf(boxesEl.children[ev.box].children[before.boxes[ev.box].n]);
+        slotsEl.children[ev.slot].replaceChildren();
+        await fly(colorOf.get(ev.screw), from, to, 300 * fast);
+      } else if (ev.type === 'boxFull') {
+        await wait(120 * fast);
+        boxesEl.children[ev.box].classList.add('done');
+        await wait(220 * fast);
+      }
+      if (gen !== generation) break;
+      hud = after;
+      renderHud(hud, ev.type === 'boxSpawn' ? ev.box : -1);
+      if (ev.type === 'boxSpawn') await wait(200 * fast);
+    }
+    if (gen === generation && batch.status !== 'playing' && !queue.length) showEnd(batch.status);
+  }
+  if (gen === generation) playing = false;
+}
+
+function tapScrew(id) {
+  const obj = board.screws.get(id);
+  const r = game.tap(id);
+  if (r.reason === 'blocked') {
+    shake(obj);
+    navigator.vibrate?.(30);
+    say('ほかの板に隠れていて外せない', true);
+  } else if (r.reason === 'full') {
+    shake(obj);
+    slotsEl.classList.add('warn');
+    setTimeout(() => slotsEl.classList.remove('warn'), 400);
+    say('待機スロットがいっぱい', true);
+  } else if (r.reason === 'ok') {
+    const from = screenOf(obj);
+    unscrew(obj);
+    for (const ev of r.events) {
+      if (ev.type === 'plate' && ev.to === 'fallen') dropPlate(board.plates.get(ev.plate));
+    }
+    queue.push({ events: r.events, from, status: r.status });
+    play();
+  }
+  return r.reason;
+}
+
+function showEnd(status) {
+  const ov = $('overlay');
+  ov.className = status;
+  $('end-title').textContent = status === 'cleared' ? 'クリア！' : '詰み';
+  $('end-text').textContent = status === 'cleared' ? 'すべての箱を埋めた' : '外せるねじが無くなった';
+  ov.hidden = false;
+}
+
+function restart() {
+  generation++;
+  queue = [];
+  playing = false;
+  for (const t of tweens) tweens.delete(t);
+  $('flyers').replaceChildren();
+  if (board) {
+    model.remove(board.root);
+    for (const p of board.plates.values()) if (p.parent === scene) scene.remove(p);
+  }
+  board = buildBoard(LEVEL);
+  model.add(board.root);
+  game.restart();
+  hud = hudOf(game.state);
+  renderHud(hud);
+  $('overlay').hidden = true;
+  requestRender();
+}
+
+// ---- タップでねじを選ぶ ----
+
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+
+// 当たり判定の相手: 盤面に残っている板と、残っているねじ
+function pickTargets() {
+  const out = [];
+  for (const p of board.plates.values()) if (p.parent === board.root) out.push(p);
+  for (const [id, s] of board.screws) if (game.state.where[id] === 'board') out.push(s);
+  return out;
+}
+
+function screwIdOf(obj) {
+  for (let o = obj; o; o = o.parent) if (o.userData.screwId) return o.userData.screwId;
+  return null;
+}
+
+function castAt(x, y) {
+  ndc.set((x / window.innerWidth) * 2 - 1, -(y / window.innerHeight) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  return raycaster.intersectObjects(pickTargets(), true)[0] ?? null;
+}
+
+// 画面上で見えているねじの位置（頭の中心が手前の板に隠れていないもの）
+function visibleScrews() {
+  const out = [];
+  const camPos = camera.position;
+  const p = new THREE.Vector3();
+  for (const [id, s] of board.screws) {
+    if (game.state.where[id] !== 'board') continue;
+    s.getWorldPosition(p);
+    const [x, y] = screenOf(s);
+    const hit = castAt(x, y);
+    if (hit && screwIdOf(hit.object) === id) out.push({ id, x, y });
+    else if (!hit || hit.distance > p.distanceTo(camPos) - 0.05) out.push({ id, x, y });
+  }
+  return out;
+}
+
+function onTap(x, y) {
+  if (!$('overlay').hidden) return;
+  const hit = castAt(x, y);
+  const id = (hit && screwIdOf(hit.object)) || nearestScrew(visibleScrews(), x, y);
+  if (id) tapScrew(id);
+}
+
+// ---- 指の操作 ----
 
 const gesture = createGesture();
 function handle(events) {
   for (const e of events) {
     if (e.type === 'rotate') rotateBy(e.dx, e.dy);
     else if (e.type === 'zoom') zoomBy(e.scale);
-    else if (e.type === 'tap') onTap(e);
+    else if (e.type === 'tap') onTap(e.x, e.y);
   }
 }
 
@@ -100,14 +386,33 @@ canvas.addEventListener('wheel', (e) => {
   zoomBy(Math.exp(-e.deltaY * 0.001));
 }, { passive: false });
 
-function frame() {
+$('restart').addEventListener('click', restart);
+$('again').addEventListener('click', restart);
+
+function frame(now) {
+  if (tweens.size) {
+    runTweens(now);
+    needsRender = true;
+  }
   if (needsRender) {
     needsRender = false;
     renderer.render(scene, camera);
   }
   requestAnimationFrame(frame);
 }
+
+restart();
+resize();
 requestAnimationFrame(frame);
 
-// スクリーンショットのスクリプトが描画の完了を待つための目印
-window.__app = { model, camera, get rendered() { return !needsRender; } };
+// スクリーンショットのスクリプトが描画の完了や盤面の様子を知るための目印
+window.__app = {
+  model,
+  camera,
+  game,
+  get rendered() { return !needsRender && !tweens.size && !playing; },
+  tapScrew,
+  screenOf: (id) => screenOf(board.screws.get(id)),
+  visibleScrews,
+  legal: () => game.legal(),
+};

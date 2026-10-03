@@ -9,11 +9,25 @@
 <link rel="stylesheet" href="./src/style.css">
 </head>
 <body>
-<header id="hud">
-  <h1>ねじ外しパズル 3D</h1>
-  <p id="hint">1本指で回す・2本指で拡大</p>
-</header>
 <canvas id="stage"></canvas>
+<header id="hud">
+  <div id="bar">
+    <span id="progress"></span>
+    <h1>ねじ外しパズル 3D</h1>
+    <button id="restart" type="button" aria-label="やり直す">↻</button>
+  </div>
+  <div id="boxes"></div>
+  <div id="slots"></div>
+  <p id="hint">1本指で回す・ねじをタップで外す</p>
+</header>
+<div id="flyers"></div>
+<div id="overlay" hidden>
+  <div class="card">
+    <h2 id="end-title"></h2>
+    <p id="end-text"></p>
+    <button id="again" type="button">もう一度</button>
+  </div>
+</div>
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>
