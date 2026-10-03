@@ -1,14 +1,15 @@
 // 1局の進行と、画面上の箱・待機スロットの表示の形。描画にも DOM にも依存しない。
 // ルール（rules.js）と隠れ判定（board.js）をつなぎ、タップされたねじを外す。
 
-import { newGame, removeScrew, status, screwById, legalMoves, SLOT_COUNT } from './rules.js';
+import { newGame, removeScrew, status, screwById, legalMoves, heldBy, SLOT_COUNT } from './rules.js';
 import { blockerFor } from './board.js';
 import { solve } from './solve.js';
 import { safeBlocker } from './safe.js';
 import { findHint } from './hint.js';
 
 // 1局。tap(id) は { reason, events, status } を返す。
-//   reason: 'ok' | 'blocked'（隠れている）| 'full'（入れる所が無い）| 'gone' | 'over'（クリアか詰みの後）
+//   reason: 'ok' | 'blocked'（隠れている）| 'held'（子の部品が付いている。holders に付いている子の板の id）
+//         | 'full'（入れる所が無い）| 'gone' | 'over'（クリアか詰みの後）
 // isBlocked はタップしたねじを外せるかの判定（物理があれば今の姿勢で調べる physics.blocker()）。
 // stuckBlocker は詰みを決める判定。物理で動く板がある間は、回せば外せるようになるかもしれないので、
 // 動かない板だけで判定する楽観的なもの（board.js の fixedBlocker）を渡す。省略すると isBlocked と同じ。
@@ -43,6 +44,7 @@ export function createGame(level, isBlocked = blockerFor(level), stuckBlocker = 
         state = r.state;
         current = status(state, stuckBlocker);
       }
+      if (r.reason === 'held') return { reason: r.reason, events: [], status: current, holders: heldBy(state, screwById(state, id).plate) };
       return { reason: r.reason, events: r.events, status: current };
     },
     // k 手目（0 から数える）を外す直前へ戻す。戻せたら true

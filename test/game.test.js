@@ -224,3 +224,17 @@ function legalAgain(g, last) {
   }
   throw new Error('詰みへ戻る手が無い');
 }
+
+describe('部品の親子（D5）', () => {
+  it('子の部品が付いた親の最後のねじのタップは held で拒否され、付いている子の板を返す', () => {
+    const level = generateLevel(1, { kind: 'car' });
+    const game = createGame(level, () => false);
+    const chassis = level.screws.filter((s) => s.plate === 'chassis');
+    for (const s of chassis.slice(1)) expect(game.tap(s.id).reason).toBe('ok');
+    const r = game.tap(chassis[0].id);
+    expect(r.reason).toBe('held');
+    expect(r.events).toEqual([]);
+    expect(r.holders).toEqual(expect.arrayContaining(['wheel1', 'wheel2', 'wheel3', 'wheel4', 'cabin']));
+    expect(game.state.where[chassis[0].id]).toBe('board');
+  });
+});

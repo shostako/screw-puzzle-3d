@@ -17,6 +17,7 @@ export const FX = {
   fly: { ms: 360, slotMs: 260, turns: 1.5, arc: 34 },          // 印が飛ぶ時間（スロットから箱へは slotMs）・回る回数・弧の高さ（px）
   land: { ms: 220 },                                            // 印が入った穴がはずむ
   burst: { ms: 260, swell: 0.07, glow: 0.45 },                  // 板がはじける（膨らむ割合と光の強さ）
+  held: { ms: 700, tint: 0.75, glow: 0.15 },                    // 親を留めている子の部品が橙に染まる（2回。色を寄せる割合と光の強さ）
   drop: { ms: 900, fall: 26, drift: 3, turns: 0.7 },            // 盤面の外へ落ちた板（落ちる距離・横へ流れる距離・回る回数）
   box: { settle: 60, lid: 160, hold: 110, leave: 220, spawn: 160 },
 };

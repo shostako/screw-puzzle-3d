@@ -7,6 +7,10 @@
 //
 // 「ねじが外せるか（隠れていないか）」はここでは決めず、isBlocked(screwId, state) を外から渡す。
 // 3D の隠れ判定は M3、板の姿勢による判定は M5 で入れる。渡さなければ、どのねじも隠れていないとみなす。
+//
+// 部品の親子（D5）: 板が parent（親の板の id）を持つとき、子の板がまだ残っている（ねじが1本でも盤面にある）間は、
+// 親の板の最後のねじは外せない（'held'）。子は親にくっついているので、子が付いたままの親は落ちない。
+// こうしないと、親を先に外したときに子の部品が宙に浮いて残る（D4 で分かったこと）。parent が無い盤面は今までどおり。
 
 export const ACTIVE_BOXES = 2;   // 同時に出ている箱の数
 export const SLOT_COUNT = 5;     // 待機スロットの数
@@ -24,6 +28,9 @@ export function validateLevel(level) {
   for (const p of level.plates) {
     if (plateIds.has(p.id)) throw new Error(`板の id が重複している: ${p.id}`);
     plateIds.add(p.id);
+  }
+  for (const p of level.plates) {
+    if (p.parent != null && !plateIds.has(p.parent)) throw new Error(`板 ${p.id} の親 ${p.parent} が無い`);
   }
   const screwIds = new Set(), perColor = new Map();
   for (const s of level.screws) {
@@ -72,11 +79,30 @@ export function openBoxFor(st, color) {
 
 const freeSlot = st => st.slots.indexOf(null);
 
-// ねじを外せるか。'ok' | 'gone'（もう盤面に無い）| 'blocked'（隠れている）| 'full'（合う箱が無く待機スロットも満杯）
+// 板ごとの子の板の id（盤面ごとに1回だけ求める）
+const childrenCache = new WeakMap();
+export function childrenOf(level) {
+  let m = childrenCache.get(level);
+  if (!m) {
+    m = new Map(level.plates.map(p => [p.id, []]));
+    for (const p of level.plates) if (p.parent != null && m.has(p.parent)) m.get(p.parent).push(p.id);
+    childrenCache.set(level, m);
+  }
+  return m;
+}
+
+// 板を留めている子の板（ねじが残っている子）の id
+export function heldBy(st, plateId) {
+  return childrenOf(st.level).get(plateId).filter(c => st.left[c] > 0);
+}
+
+// ねじを外せるか。'ok' | 'gone'（もう盤面に無い）| 'held'（板の最後のねじで、子の板がまだ残っている）
+//   | 'blocked'（隠れている）| 'full'（合う箱が無く待機スロットも満杯）
 export function checkRemove(st, id, isBlocked = notBlocked) {
   const s = screwById(st, id);
   if (!s) throw new Error(`ねじ ${id} が無い`);
   if (st.where[id] !== 'board') return 'gone';
+  if (st.left[s.plate] === 1 && heldBy(st, s.plate).length) return 'held';
   if (isBlocked(id, st)) return 'blocked';
   if (openBoxFor(st, s.color) < 0 && freeSlot(st) < 0) return 'full';
   return 'ok';

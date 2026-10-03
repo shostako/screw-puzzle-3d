@@ -48,7 +48,7 @@ describe('部品の木（parts.js）', () => {
     expect(() => flattenTree({ id: 'a', size: [1, 1], thickness: 1, n: [1, 0, 0], u: [1, 0, 0] })).toThrow();
   });
 
-  it('盤面の parent から木をたどれる（parent の無い家具の板はそれぞれ根）', () => {
+  it('盤面の parent から木をたどれる（家具の板はそれぞれ根で、札だけが載っている板の子）', () => {
     const level = generateLevel(1, { kind: 'car' });
     const { roots, children } = partTree(level);
     expect(roots).toEqual(['chassis']);
@@ -56,7 +56,10 @@ describe('部品の木（parts.js）', () => {
     expect(children.get('cabin')).toEqual(expect.arrayContaining(['window1', 'window2']));
     expect(depthOf(level, 'window1')).toBe(2);
     const box = generateLevel(1, { kind: 'box' });
-    expect(partTree(box).roots).toHaveLength(box.plates.length);
+    const labels = box.plates.filter((p) => p.id.startsWith('label'));
+    expect(labels.length).toBeGreaterThan(0);
+    expect(partTree(box).roots).toHaveLength(box.plates.length - labels.length);
+    for (const lb of labels) expect(partTree(box).children.get(lb.parent)).toContain(lb.id);
   });
 
   it('円柱の当たりの形は、半径の円に外接する多角形', () => {

@@ -294,6 +294,27 @@ function burst(obj) {
   });
 }
 
+// 親の最後のねじが外せないとき（子の部品がまだ付いている）、付いている子の部品を2回、橙色に染めて知らせる。
+// 明るい板は光らせるだけだと白く飛ぶので、色そのものを寄せる。材質は板ごとに1つなので描く回数は増えない
+function glowHolders(ids) {
+  for (const id of ids) {
+    const obj = board.plates.get(id);
+    if (!obj || obj.userData.glowing) continue;
+    obj.userData.glowing = true;
+    const mat = obj.material, base = mat.color.clone(), col = new THREE.Color(THEME.held);
+    tween(FX.held.ms, (k) => {
+      const w = Math.sin(k * Math.PI * 2) ** 2;
+      mat.color.copy(base).lerp(col, FX.held.tint * w);
+      mat.emissive.copy(col).multiplyScalar(FX.held.glow * w);
+    }, () => {
+      mat.color.copy(base);
+      mat.emissive.setScalar(0);
+      obj.userData.glowing = false;
+    });
+  }
+  requestRender();
+}
+
 // 物理で盤面の外まで落ちきった板は、立体から外して画面の下へ回りながら落とし、消す。
 // 画面の中心から遠ざかる向きへ流す
 function dropPlate(obj) {
@@ -515,6 +536,10 @@ function tapScrew(id) {
     say(by === 'loose' ? '落ちた板に隠れている。回して払い落とそう'
       : by === 'hanging' ? 'ぶら下がった板に隠れている。回して動かそう'
       : 'ほかの板に隠れていて外せない', true);
+  } else if (r.reason === 'held') {
+    shake(obj);
+    glowHolders(r.holders);
+    say('付いている部品を先に外そう', true);
   } else if (r.reason === 'full') {
     shake(obj);
     slotsEl.classList.add('warn');

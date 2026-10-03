@@ -11,7 +11,8 @@
 //   4. その順番を下敷きに、箱の順番を混ぜて色を割り当て、色つきで手順を探す（solve.js）。見つかればそれを採る。
 //      何度試しても見つからなければ、順番どおりに箱が埋まる割り当て（必ずその順番で解ける）にする。
 // 返り値の盤面は rules.js の newGame と board.js の validateBoard をそのまま通る形で、
-// meta に { seed, kind, solution（見つけた手順）, tries（色の割り当てを試した回数）, fallback, attempt（形を作り直した回数）} を持つ。
+// meta に { seed, kind, solution（見つけた手順）, tries（色の割り当てを試した回数）, fallback, attempt（形を作り直した回数）,
+// difficulty（D5: { layers: 層の数, perLayer: 層ごとのねじの本数, slots: 手順で待機スロットへ置いた回数 }、layers.js）} を持つ。
 
 import { safeBlocker } from './safe.js';
 import { coverMap, plateFrame, plateVertices, outlineOf, insetOutline, insidePolygon } from './board.js';
@@ -19,6 +20,7 @@ import { flattenTree } from './parts.js';
 import { THEMES, THEME_BUILDERS } from './themes.js';
 import { solve } from './solve.js';
 import { newGame, removeScrew, isCleared } from './rules.js';
+import { difficultyOf, slotUses } from './layers.js';
 
 export const COLORS = ['red', 'blue', 'yellow', 'green', 'purple', 'cyan', 'orange', 'pink'];
 // 家具の形（M6）。kind を省いたときはこの中から選ぶ（M6 からのシードの盤面を変えないため、題材は入れない）
@@ -33,6 +35,7 @@ const INSET = R + 0.25;    // ねじの中心と板の縁との間
 const GAP = 2 * R + 0.5;   // 同じ板のねじどうしの中心の間
 const SHAPE_TRIES = 30;    // 形を作り直す上限
 const COLOR_TRIES = 10;    // 色の割り当てを試す回数
+const SLOT_TRIES = 3;      // 解ける割り当てが見つかってから、待機スロットの回数（minSlots）を満たすまで試す回数の上限
 
 export function mulberry32(seed) {
   let a = seed >>> 0;
@@ -162,6 +165,7 @@ function addLabels(rnd, parts, count) {
     c[v] += (rnd() - 0.5) * (host.ext[v] - ext[v] - 0.4);
     const lb = slab(`label${k + 1}`, a, c, ext, [side]);
     if (parts.some((b) => overlap(b, lb))) continue;
+    lb.plate.parent = host.plate.id;   // 札は載っている板の子（D5: 札が残っている間、その板は落ちない）
     parts.push(lb);
   }
 }
@@ -221,9 +225,11 @@ function placeAll(rnd, parts, maxPer) {
   }
   if (total % 3 || total < 9) return null;
   const plates = [], screws = [];
+  const kept = new Set(parts.filter((_, i) => keep[i]).map((b) => b.plate.id));
   parts.forEach((b, i) => {
     if (!keep[i]) return;
-    plates.push(b.plate);
+    // 親の板を捨てたら、子は根にする（板そのものは書き換えない。ねじを置き直すときに同じ板を使い回すため）
+    plates.push(b.plate.parent && !kept.has(b.plate.parent) ? { ...b.plate, parent: null } : b.plate);
     per[i].forEach((s, k) => screws.push({ id: `${b.plate.id}-${k + 1}`, plate: b.plate.id, color: null, position: s.p, dir: s.dir }));
   });
   return { plates, screws };
@@ -253,17 +259,33 @@ function faceArea(plate) {
   return Math.abs(signedArea(outlineOf(plate)));
 }
 
+// 層つきのねじ配置（D5）の表。部品の役（role）ごとに、ねじの本数の下限と、子の部品の下に隠して置く本数。
+// 隠したねじは、その子を外すまで外せない（層が 1 段深くなる）。子が載っていない面には置けないので、置ける分だけ。
+// 下限の無い役は面の広さで 2〜4 本（D4 と同じ）。maxPer（板 1 枚の上限）は表より優先
+export const LAYER_TABLE = {
+  core: { min: 3, hidden: 2 },    // 芯（車体・壁・胴）
+  frame: { min: 2, hidden: 1 },   // 骨組み（客室・屋根・庭・頭）
+  outer: { min: 2, hidden: 0 },   // 外板（車輪・窓・ドア・脚・鼻）
+  decor: { min: 2, hidden: 0 },   // 装飾（屋根板・バンパー・耳・ぶち）
+};
+
 // 部品の木の板すべてにねじを置く。どの部品も 2 本以上（置けなければ形ごと作り直す。親を捨てると子が宙に浮くため）
 export function placeParts(rnd, parts, maxPer) {
   const per = parts.map(({ plate, faces }) => {
     const area = faceArea(plate);
-    const n = Math.min(maxPer, 2 + Math.floor(rnd() * (area > 12 ? 3 : area > 4 ? 2 : 1)));
-    return placeOnPart(rnd, plate, faces, n);
+    const row = LAYER_TABLE[plate.role] ?? { min: 2, hidden: 0 };
+    const n = Math.min(maxPer, Math.max(row.min, 2 + Math.floor(rnd() * (area > 12 ? 3 : area > 4 ? 2 : 1))));
+    const kids = parts.filter((c) => c.plate.parent === plate.id).map((c) => c.plate);
+    const preset = row.hidden ? hiddenSpots(rnd, plate, faces, kids, Math.min(row.hidden, n - 1)) : [];
+    const out = placeOnPart(rnd, plate, faces, n, preset);
+    out.keep = Math.max(2, Math.min(row.min, n), out.hidden ?? 0);   // 3 の倍数にそろえるときに、これより減らさない
+    return out;
   });
   if (per.some((x) => x.length < 2)) return null;
   let total = per.reduce((m, x) => m + x.length, 0);
   while (total % 3) {
-    const i = per.reduce((best, x, k) => (x.length > 2 && (best < 0 || x.length > per[best].length) ? k : best), -1);
+    // 減らすのは隠していないねじから（隠したねじは置いた順の先頭にある）。表の下限も割らない
+    const i = per.reduce((best, x, k) => (x.length > x.keep && (best < 0 || x.length > per[best].length) ? k : best), -1);
     if (i < 0) break;
     per[i].pop();
     total--;
@@ -276,8 +298,69 @@ export function placeParts(rnd, parts, maxPer) {
   return { plates, screws };
 }
 
-// 部品の面（局所の z = ±厚み/2）に n 本。向きは任意（斜めの屋根板もそのまま）。位置は局所の xy で 0.05 刻み
-export function placeOnPart(rnd, plate, faces, n) {
+// 2 次元の点の凸包（反時計回り、一直線上の点は除く）
+function hull2(pts) {
+  const ps = pts.map((p) => [p[0], p[1]]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const crossZ = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const half = (list) => {
+    const out = [];
+    for (const p of list) {
+      while (out.length >= 2 && crossZ(out[out.length - 2], out[out.length - 1], p) <= 1e-9) out.pop();
+      out.push(p);
+    }
+    out.pop();
+    return out;
+  };
+  return [...half(ps), ...half(ps.slice().reverse())];
+}
+
+// 子の部品の真下（ねじ頭が子にすっかり隠れる所）に置くねじの位置を count 本まで。返り値 [{ q: 局所の xy, side }]
+// 子ごとに、親の局所座標へ子の頂点を写し、親の面（faces のどちらか）の外側にあれば、その影を R だけ縮めた中から選ぶ。
+// なるべく別々の子の下に置く
+function hiddenSpots(rnd, plate, faces, kids, count) {
+  if (count <= 0 || !kids.length || plate.shape === 'cylinder') return [];
+  const { center, u, v, n } = plateFrame(plate);
+  const half = plate.thickness / 2;
+  const inner = insetOutline(outlineOf(plate), INSET);
+  const shadows = [];
+  for (const kid of kids) {
+    const loc = plateVertices(kid).map((w) => {
+      const d = [w[0] - center[0], w[1] - center[1], w[2] - center[2]];
+      return [d[0] * u[0] + d[1] * u[1] + d[2] * u[2], d[0] * v[0] + d[1] * v[1] + d[2] * v[2], d[0] * n[0] + d[1] * n[1] + d[2] * n[2]];
+    });
+    const side = loc.every((p) => p[2] >= half - 1e-6) ? 1 : loc.every((p) => p[2] <= -half + 1e-6) ? -1 : 0;
+    if (!side || !faces.includes(side)) continue;
+    const hl = hull2(loc);
+    if (hl.length < 3) continue;
+    const under = insetOutline(hl, R + 0.05);
+    if (signedArea(under) * signedArea(hl) <= 0) continue;
+    // 候補は 0.05 刻みの格子から（親の内側と子の影の両方に入る点）
+    const xs = under.map((p) => p[0]), ys = under.map((p) => p[1]);
+    const cand = [];
+    for (let x = Math.ceil(Math.min(...xs) * 20); x <= Math.floor(Math.max(...xs) * 20); x += 2) {
+      for (let y = Math.ceil(Math.min(...ys) * 20); y <= Math.floor(Math.max(...ys) * 20); y += 2) {
+        const q = [x / 20, y / 20];
+        if (insidePolygon(q, under) && insidePolygon(q, inner)) cand.push(q);
+      }
+    }
+    if (cand.length) shadows.push({ side, cand });
+  }
+  shuffle(shadows, rnd);
+  const out = [];
+  for (let round = 0; round < 2 && out.length < count; round++) {
+    for (const sh of shadows) {
+      if (out.length >= count) break;
+      const ok = sh.cand.filter((q) => !out.some((o) => Math.hypot(o.q[0] - q[0], o.q[1] - q[1]) < GAP));
+      if (!ok.length) continue;
+      out.push({ q: pick(rnd, ok), side: sh.side });
+    }
+  }
+  return out;
+}
+
+// 部品の面（局所の z = ±厚み/2）に n 本。向きは任意（斜めの屋根板もそのまま）。位置は局所の xy で 0.05 刻み。
+// preset（hiddenSpots の位置）があれば、それを先に置いてから残りを足す。返り値の hidden は先に置いた本数
+export function placeOnPart(rnd, plate, faces, n, preset = []) {
   const { center, u, v, n: nrm } = plateFrame(plate);
   let inside, x0, x1, y0, y1;
   if (plate.shape === 'cylinder') {
@@ -304,7 +387,9 @@ export function placeOnPart(rnd, plate, faces, n) {
     }
     return out;
   };
-  let out = fill([]);
+  const first = preset.map((x) => at(x.q, x.side));
+  let out = fill(first.slice());
+  out.hidden = first.length;
   if (out.length < 2) {
     // 狭い部品（車輪・ドアなど）は乱数では 2 本目が入りにくいので、一番離れた 2 点に置き直してから残りを足す
     // 候補の 2 点の組を、離れている順に試す（0.05 刻みに丸めても内側に残り、GAP 以上離れる組を採る）
@@ -330,6 +415,7 @@ export function placeOnPart(rnd, plate, faces, n) {
       if (got.length === 2) { out = got; break; }
     }
     if (out.length === 2) fill(out);
+    out.hidden = 0;
   }
   return out;
 }
@@ -358,9 +444,9 @@ function assignColors(order, queue, win, noise, rnd) {
 // opts: kind（'box' | 'shelf' | 'table'、省略で乱数。題材の 'car' | 'house' | 'animal' も指定できる）、colors（色の数）、labels（札の数）、
 //       win / noise（色の混ぜ方。大きいほど待機スロットを使う難しい割り当て）、budget（手順探索の打ち切り）、
 //       open / inner / maxPer（形の指定。箱の前を開けるか、中の仕切り・棚板を入れるか、板1枚のねじの上限）、
-//       alternate（箱の色を混ぜずに順に回す）
+//       alternate（箱の色を混ぜずに順に回す）、minSlots（D5: 手順で待機スロットを使う回数の下限。届かなければ一番多いもの）
 export function generateLevel(seed, opts = {}) {
-  const { colors = 4, labels = 2, win = 6, noise = 4, budget = 800 } = opts;
+  const { colors = 4, labels = 2, win = 6, noise = 4, budget = 800, minSlots = 0 } = opts;
   const form = { open: opts.open, inner: opts.inner, maxPer: opts.maxPer };
   for (let attempt = 0; attempt < SHAPE_TRIES; attempt++) {
     const rnd = mulberry32(seed * 7919 + attempt * 104729 + 1);
@@ -369,8 +455,12 @@ export function generateLevel(seed, opts = {}) {
     if (!shape || shape.plates.length > 30) continue;
     // 色を決めずに外せる順番（1色だけの盤面として解く）
     const plain = { ...shape, screws: shape.screws.map((s) => ({ ...s, color: 'x' })), queue: new Array(shape.screws.length / 3).fill('x') };
-    const order = solve(plain, safeBlocker(plain), { budget: budget * 3 });
+    // 安全側の見積もりは形だけで決まる（色を見ない）ので、1 色の盤面のものを色の割り当てを変えても使い回す
+    const blocker = safeBlocker(plain);
+    const order = solve(plain, blocker, { budget: budget * 3 });
     if (!order) continue;
+    // 難しさの数値（layers.js）
+    const rate = (level, path) => difficultyOf(level, path, { plain, isBlocked: blocker });
 
     const n = shape.screws.length / 3;
     const palette = shuffle(COLORS.slice(), rnd).slice(0, Math.min(colors, n));
@@ -383,15 +473,23 @@ export function generateLevel(seed, opts = {}) {
       screws: shape.screws.map((s) => ({ ...s, color: colorOf.get(s.id) })),
       queue,
     });
-    let tries = 0;
+    // minSlots: 見つけた手順で待機スロットを使う回数の下限（D5）。SLOT_TRIES 回までに届かなければ、試した中で一番多く使うものを採る
+    let tries = 0, best = null;
     for (; tries < COLOR_TRIES; tries++) {
       const level = make(assignColors(order, queue, win, noise, rnd));
-      const path = solve(level, safeBlocker(level), { budget });
-      if (path) return { ...level, meta: { seed, kind, solution: path, tries: tries + 1, fallback: false, attempt } };
+      const path = solve(level, blocker, { budget });
+      if (!path) continue;
+      const slots = slotUses(level, path);
+      if (!best || slots > best.slots) best = { level, path, slots, tries: tries + 1 };
+      if (slots >= minSlots || tries + 1 >= SLOT_TRIES) break;
+    }
+    if (best) {
+      const { level, path } = best;
+      return { ...level, meta: { seed, kind, solution: path, tries: best.tries, fallback: false, attempt, difficulty: rate(level, path) } };
     }
     // 最後の砦: 順番どおりに箱が埋まる割り当て。外す順番 order のまま、どのねじも出ている箱へ入る
     const level = make(assignColors(order, queue, 1, 0, rnd));
-    if (replays(level, order)) return { ...level, meta: { seed, kind, solution: order, tries, fallback: true, attempt } };
+    if (replays(level, order)) return { ...level, meta: { seed, kind, solution: order, tries, fallback: true, attempt, difficulty: rate(level, order) } };
   }
   throw new Error(`シード ${seed} で解ける盤面を作れなかった`);
 }

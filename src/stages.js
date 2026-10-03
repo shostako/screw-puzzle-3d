@@ -8,6 +8,10 @@
 //   5〜6  本棚と机（形が変わる）。
 //   7〜   形は家具 3 種類と題材 3 種類（D4: 車・家・ぶた）を交互に回し、色・札・ねじの数・色の混ぜ方を少しずつ増やす。
 //         題材は札を載せない（窓やぶちなどの飾りの部品が札の代わり）。
+//         D5 から、難しさの数値（layers.js、盤面の meta.difficulty）も条件に入れる: 層は 2 段以上（ねじが全部見えている
+//         平たい盤面を避ける）、見つけた手順で待機スロットを使う回数の下限を 25 から 1 回、37 から 2 回。
+//         待機スロットの回数は「なるべく」の条件（prefer）で、PREFER_TRIES 個のシードで見つからなければ、ほかの条件だけで選ぶ
+//         （ぶたは手順に待機スロットが要らない割り当てになりやすく、待つと作る時間が延びるため）。
 // 設定の形は generator.js の generateLevel の opts。want は盤面が満たすべき条件で、満たすまでシードを変えて作り直す。
 
 import { generateLevel } from './generator.js';
@@ -54,18 +58,25 @@ export function stageConfig(n) {
   const labels = Math.min(4, 2 + Math.floor(k / 12));       // 7〜18: 2 枚、19〜30: 3 枚、31〜: 4 枚
   const win = Math.min(9, 4 + Math.floor(k / 4));           // 色の混ぜ方は 4 ステージごとに強める
   const noise = Math.min(6, 2 + Math.floor(k / 6));
-  // ねじの数の下限は 3 ステージごとに 3 本ずつ。頭打ちは SCREW_CAP（無ければ 24 本）
+  // ねじの数の下限は 3 ステージごとに 3 本ずつ。頭打ちは SCREW_CAP（無ければ 24 本）。
+  // 上限は下限 + 6 本（D5: 早いステージに後より多いねじの盤面が出ないように）
   const lo = Math.min(SCREW_CAP[kind] ?? 24, 15 + Math.floor(k / 3) * 3);
-  return { kind, labels, colors, win, noise, want: screwRange(lo, Infinity) };
+  const minLayers = 2;
+  const minSlots = n >= 37 ? 2 : n >= 25 ? 1 : 0;
+  const layered = (l) => l.meta.difficulty.layers >= minLayers;
+  const prefer = (l) => l.meta.difficulty.slots >= minSlots;
+  return { kind, labels, colors, win, noise, minSlots, minLayers, want: (l) => screwRange(lo, lo + 6)(l) && layered(l), prefer };
 }
 
 const SEED_TRIES = 40;
+const PREFER_TRIES = 3;
 
 // ステージ番号の盤面。条件を満たすまでシードを n * 1000 + 0, 1, 2 … と変える。
 // meta に stage と、使ったシードを持つ（?seed= で同じ盤面を開ける）
 export function stageLevel(n) {
-  const { want, ...opts } = stageConfig(n);
-  let last = null;
+  const { want, prefer, minLayers, ...opts } = stageConfig(n);
+  const done = (level) => ({ ...level, meta: { ...level.meta, stage: n, opts } });
+  let last = null, ok = null;
   for (let t = 0; t < SEED_TRIES; t++) {
     const seed = n * 1000 + t;
     let level;
@@ -75,9 +86,12 @@ export function stageLevel(n) {
       continue;
     }
     last = level;
-    if (!want || want(level)) return { ...level, meta: { ...level.meta, stage: n, opts } };
+    if (want && !want(level)) continue;
+    if (!prefer || prefer(level)) return done(level);
+    ok ??= level;
+    if (t + 1 >= PREFER_TRIES) return done(ok);
   }
   // 条件に合う盤面が見つからなければ、最後に作れたものを使う（どれも解ける）
-  if (last) return { ...last, meta: { ...last.meta, stage: n, opts } };
+  if (ok || last) return done(ok ?? last);
   throw new Error(`ステージ ${n} の盤面を作れなかった`);
 }

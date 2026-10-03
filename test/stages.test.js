@@ -92,6 +92,7 @@ describe('ステージの盤面', () => {
       if (n !== 4) expect(b.labels, `ステージ ${n} の札`).toBeGreaterThanOrEqual(a.labels);
       expect(b.win, `ステージ ${n} の混ぜ方`).toBeGreaterThanOrEqual(a.win);
       expect(b.noise, `ステージ ${n} の混ぜ方`).toBeGreaterThanOrEqual(a.noise);
+      expect(b.minSlots ?? 0, `ステージ ${n} の待機スロットの回数`).toBeGreaterThanOrEqual(a.minSlots ?? 0);
     }
     const avg = (ns) => ns.reduce((m, n) => m + level(n).screws.length, 0) / ns.length;
     const first = avg([1, 2, 3]), intro = avg([4, 5, 6]), mid = avg([7, 8, 9, 10, 11, 12]), late = avg([25, 26, 27, 28, 29, 30]);
@@ -99,6 +100,17 @@ describe('ステージの盤面', () => {
     expect(intro).toBeLessThanOrEqual(mid);
     expect(mid).toBeLessThan(late);
     expect(new Set(level(30).queue).size).toBeGreaterThan(new Set(level(1).queue).size);
+  });
+
+  it('7 から先の盤面は層が 2 段以上。待機スロットの回数の条件は、満たせるシードがあれば満たす（D5）', () => {
+    let met = 0, asked = 0;
+    for (let n = 7; n <= 48; n++) {
+      const l = level(n), cfg = stageConfig(n);
+      expect(l.meta.difficulty.layers, `ステージ ${n} の層`).toBeGreaterThanOrEqual(cfg.minLayers);
+      if (cfg.minSlots) { asked++; if (l.meta.difficulty.slots >= cfg.minSlots) met++; }
+    }
+    expect(asked).toBeGreaterThan(0);
+    expect(met / asked).toBeGreaterThan(0.6);
   });
 
   it('ステージの盤面はスマホで待てる時間で作れる', () => {
