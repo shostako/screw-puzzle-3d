@@ -336,3 +336,23 @@ button {
   font-size: 15px;
   font-weight: 400;
 }
+
+/* マスコット「ネジまる」（D3）。左下に立たせる。指の操作は下の盤面へ通す。
+   終わりの画面（#overlay、z-index 3）より手前に出して、成功・失敗の動きが見えるようにする */
+#mascot {
+  position: fixed;
+  left: calc(var(--safe-area-inset-left, env(safe-area-inset-left, 0px)) + 4px);
+  bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 6px);
+  width: 108px;
+  height: 140px;
+  pointer-events: none;
+  z-index: 4;
+}
+/* 終わりの画面ではカードの上に大きく乗る（main.js がカードの中へ移す） */
+.card #mascot {
+  position: static;
+  display: block;
+  width: 150px;
+  height: 194px;
+  margin: -150px auto 0;
+}
