@@ -1,25 +1,29 @@
+/* 色は src/theme.js の表から main.js が入れる（ここの値は読み込み前の仮の色） */
 :root {
-  --bg: #f4ead9;
-  --ink: #4a3b2a;
-  --ink-soft: #8a7760;
-  --panel: rgba(255, 250, 240, 0.86);
-  --hole: #d9c8ad;
-  --red: #e0473a;
-  --blue: #2f7fe0;
-  --yellow: #f3b81f;
-  --green: #3aae5a;
-  --purple: #9354d6;
-  --cyan: #22b3ad;
-  --orange: #f07a22;
-  --pink: #eb5c9c;
+  --sky-top: #9fd3ff;
+  --sky-mid: #e6f4ff;
+  --sky-bottom: #fff4d6;
+  --mat: #ffffff;
+  --shade: rgba(60, 90, 130, 0.16);
+  --ink: #1d2430;
+  --ink-soft: #5d6878;
+  --panel: rgba(255, 255, 255, 0.82);
+  --hole: #e3e8ee;
+  --accent: #e8a400;
+  --lift: 0 3px 0 rgba(29, 36, 48, 0.12), 0 4px 10px rgba(29, 36, 48, 0.1);
 }
 html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: var(--bg);
+  /* 空のグラデーション、白い丸いマット、マットに落ちる立体の影（3D の外で描くので描く負荷が無い） */
+  background:
+    radial-gradient(ellipse 36% 5% at 50% 77%, var(--shade), transparent),
+    radial-gradient(ellipse 84% 14% at 50% 82%, var(--mat) 97%, transparent 100%),
+    linear-gradient(var(--sky-top), var(--sky-mid) 62%, var(--sky-bottom));
+  background-color: var(--sky-mid);
   color: var(--ink);
-  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  font-family: "Hiragino Maru Gothic ProN", "M PLUS Rounded 1c", system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
   -webkit-user-select: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -58,9 +62,9 @@ button {
 #bar h1 {
   margin: 0;
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: 0.05em;
-  color: var(--ink-soft);
+  color: var(--ink);
 }
 #progress {
   font-size: 13px;
@@ -78,7 +82,7 @@ button {
   background: var(--panel);
   font-size: 22px;
   line-height: 1;
-  box-shadow: 0 1px 3px rgba(74, 59, 42, 0.25);
+  box-shadow: var(--lift);
 }
 #boxes {
   display: flex;
@@ -91,15 +95,15 @@ button {
   display: flex;
   gap: 8px;
   padding: 10px 12px;
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--c, #bbb) 26%, #fffaf0);
+  border-radius: 16px;
+  background: #fff;
   border: 3px solid var(--c, #bbb);
-  box-shadow: 0 2px 4px rgba(74, 59, 42, 0.2);
+  box-shadow: 0 4px 0 color-mix(in srgb, var(--c, #bbb) 55%, #1d2430), 0 6px 12px rgba(29, 36, 48, 0.12);
   transition: transform 0.2s, opacity 0.2s;
 }
 .box.empty {
   border-style: dashed;
-  border-color: #c9b89c;
+  border-color: rgba(29, 36, 48, 0.22);
   background: transparent;
   box-shadow: none;
 }
@@ -115,7 +119,7 @@ button {
   height: 30px;
   border-radius: 50%;
   background: var(--hole);
-  box-shadow: inset 0 2px 3px rgba(74, 59, 42, 0.35);
+  box-shadow: inset 0 3px 0 rgba(29, 36, 48, 0.12);
 }
 #slots {
   display: inline-flex;
@@ -124,22 +128,30 @@ button {
   padding: 8px 12px;
   border-radius: 24px;
   background: var(--panel);
-  box-shadow: 0 1px 3px rgba(74, 59, 42, 0.2);
+  box-shadow: var(--lift);
   transition: background 0.15s;
 }
-#slots.warn { background: #f6c4b4; }
+#slots.warn { background: #ffc9bd; }
 .slot { width: 34px; height: 34px; }
-/* 入っているねじ（上から見た頭と十字の溝） */
+/* 入っているねじ（上から見たキャップボルトの頭: ローレットの縁、艶、暗い六角穴） */
 .dot {
+  position: relative;
   width: 100%;
   height: 100%;
   border-radius: 50%;
   background:
-    linear-gradient(#2a2018, #2a2018) center / 56% 14% no-repeat,
-    linear-gradient(#2a2018, #2a2018) center / 14% 56% no-repeat,
-    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.55), transparent 45%),
+    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.6), transparent 42%),
+    radial-gradient(circle, transparent 74%, rgba(0, 0, 0, 0.22) 76%),
+    repeating-conic-gradient(rgba(0, 0, 0, 0.14) 0 6deg, transparent 6deg 12deg),
     var(--c);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.18);
+}
+.dot::after {
+  content: "";
+  position: absolute;
+  inset: 27%;
+  background: #17191d;
+  clip-path: polygon(25% 7%, 75% 7%, 100% 50%, 75% 93%, 25% 93%, 0 50%);
 }
 #hint {
   margin: 8px 0 0;
@@ -147,7 +159,7 @@ button {
   color: var(--ink-soft);
   transition: color 0.2s;
 }
-#hint.flash { color: #c2562f; }
+#hint.flash { color: #d2452f; }
 
 /* 画面の右下（親指の届く所）: 向きを戻す・音と振動 */
 #tools {
@@ -166,7 +178,7 @@ button {
   border: none;
   border-radius: 50%;
   background: var(--panel);
-  box-shadow: 0 1px 3px rgba(74, 59, 42, 0.25);
+  box-shadow: var(--lift);
 }
 #tools svg {
   display: block;
@@ -205,7 +217,7 @@ button {
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(74, 59, 42, 0.35);
+  background: rgba(29, 36, 48, 0.35);
   z-index: 3;
   animation: fade 0.3s ease-out;
 }
@@ -214,12 +226,12 @@ button {
 .card {
   min-width: 240px;
   padding: 26px 28px 22px;
-  border-radius: 20px;
-  background: #fffaf0;
+  border-radius: 24px;
+  background: #fff;
   text-align: center;
-  box-shadow: 0 8px 24px rgba(74, 59, 42, 0.35);
+  box-shadow: 0 6px 0 rgba(29, 36, 48, 0.12), 0 12px 28px rgba(29, 36, 48, 0.3);
 }
-.card h2 { margin: 0; font-size: 28px; letter-spacing: 0.08em; }
+.card h2 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: 0.08em; }
 .card p { margin: 8px 0 18px; color: var(--ink-soft); font-size: 14px; }
 #again, #next {
   display: block;
@@ -228,18 +240,20 @@ button {
   min-height: 48px;
   border: none;
   border-radius: 24px;
-  background: #c2562f;
-  color: #fff;
+  background: var(--accent);
+  color: #3a2a00;
   font-size: 17px;
-  font-weight: 700;
+  font-weight: 800;
+  box-shadow: 0 4px 0 #b07c00;
 }
-#overlay.cleared h2 { color: #c2562f; }
+#overlay.cleared h2 { color: #d08a00; }
 #next[hidden] { display: none; }
 /* 次へがあるときの「もう一度」は控えめに */
 #again.sub {
   margin-top: 10px;
   min-height: 40px;
   background: transparent;
+  box-shadow: none;
   color: var(--ink-soft);
   font-size: 15px;
   font-weight: 400;
