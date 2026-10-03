@@ -1,0 +1,12 @@
+{
+  "appId": "io.github.shostako.screwpuzzle3d",
+  "appName": "ねじ外し3D",
+  "webDir": "dist",
+  "backgroundColor": "#f4ead9",
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css",
+      "style": "LIGHT"
+    }
+  }
+}
