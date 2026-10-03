@@ -68,9 +68,12 @@ const overlap = (a, b) => [0, 1, 2].every((k) => lo(a, k) < hi(b, k) - 1e-9 && l
 
 // ---- 形 ----
 
-function box(rnd) {
+// form: 形の決め方の指定（省略で乱数）。open（前を開けるか）・inner（中の仕切りと棚板を入れてよいか）
+function box(rnd, form = {}) {
   const W = range(rnd, 4.5, 6.5), H = range(rnd, 4, 6), D = range(rnd, 4, 6);
-  const openFront = rnd() < 0.35;
+  const r = rnd();
+  const openFront = form.open ?? r < 0.35;
+  const inner = form.inner ?? true;
   const out = [
     slab('top', 1, [0, H / 2 - T / 2, 0], [W, T, D], [1]),
     slab('bottom', 1, [0, -H / 2 + T / 2, 0], [W, T, D], [-1]),
@@ -80,15 +83,15 @@ function box(rnd) {
   ];
   if (!openFront) out.push(slab('front', 2, [0, 0, D / 2 - T / 2], [W, H - 2 * T, T], [1]));
   const iz0 = -D / 2 + T, iz1 = openFront ? D / 2 : D / 2 - T;   // 中の奥行き
-  const inner = { x0: -W / 2 + T, x1: W / 2 - T, y0: -H / 2 + T, y1: H / 2 - T, z0: iz0, z1: iz1 };
+  const room = { x0: -W / 2 + T, x1: W / 2 - T, y0: -H / 2 + T, y1: H / 2 - T, z0: iz0, z1: iz1 };
   let px = null;
-  if (rnd() < 0.5) {
+  if (rnd() < 0.5 && inner) {
     px = range(rnd, -W / 2 + 1.8, W / 2 - 1.8, 0.25);
     out.push(slab('wall', 0, [px, 0, (iz0 + iz1) / 2], [T, H - 2 * T, iz1 - iz0], [1, -1]));
   }
-  if (rnd() < 0.6) {
-    const y = range(rnd, inner.y0 + 1.5, inner.y1 - 1.5, 0.25);
-    const spans = px === null ? [[inner.x0, inner.x1]] : [[inner.x0, px - T / 2], [px + T / 2, inner.x1]];
+  if (rnd() < 0.6 && inner) {
+    const y = range(rnd, room.y0 + 1.5, room.y1 - 1.5, 0.25);
+    const spans = px === null ? [[room.x0, room.x1]] : [[room.x0, px - T / 2], [px + T / 2, room.x1]];
     spans.forEach(([a, b], k) => {
       if (b - a < 1.6) return;
       out.push(slab(`shelf${k + 1}`, 1, [(a + b) / 2, y, (iz0 + iz1) / 2], [b - a, T, iz1 - iz0], [1, -1]));
@@ -97,7 +100,7 @@ function box(rnd) {
   return out;
 }
 
-function bookshelf(rnd) {
+function bookshelf(rnd, form = {}) {
   const W = range(rnd, 4, 5.5), H = range(rnd, 5.5, 7), D = range(rnd, 2.5, 3.5);
   const out = [
     slab('top', 1, [0, H / 2 - T / 2, 0], [W, T, D], [1]),
@@ -106,7 +109,7 @@ function bookshelf(rnd) {
     slab('left', 0, [-W / 2 + T / 2, 0, T / 2], [T, H - 2 * T, D - T], [-1]),
     slab('right', 0, [W / 2 - T / 2, 0, T / 2], [T, H - 2 * T, D - T], [1]),
   ];
-  const n = rnd() < 0.5 ? 1 : 2;
+  const n = form.inner === false ? 0 : rnd() < 0.5 ? 1 : 2;
   const y0 = -H / 2 + T, y1 = H / 2 - T, gap = (y1 - y0) / (n + 1);
   for (let k = 1; k <= n; k++) {
     out.push(slab(`shelf${k}`, 1, [0, y0 + gap * k, T / 2], [W - 2 * T, T, D - T], [1, -1]));
@@ -114,7 +117,7 @@ function bookshelf(rnd) {
   return out;
 }
 
-function table(rnd) {
+function table(rnd, form = {}) {
   const W = range(rnd, 5, 6.5), H = range(rnd, 3.5, 5), D = range(rnd, 3.5, 5);
   const LW = 1.2;   // 脚の幅
   const out = [slab('top', 1, [0, H / 2 - T / 2, 0], [W, T, D], [1, -1])];
@@ -122,7 +125,7 @@ function table(rnd) {
   [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz], k) => {
     out.push(slab(`leg${k + 1}`, 0, [sx * legX, -T / 2, sz * legZ], [T, H - T, LW], [sx]));
   });
-  if (rnd() < 0.7) {
+  if (rnd() < 0.7 && form.inner !== false) {
     const y = -H / 2 + range(rnd, 0.8, 1.4, 0.2);
     out.push(slab('shelf1', 1, [0, y, 0], [2 * (legX - T / 2), T, D - 0.6], [1, -1]));
   }
@@ -181,20 +184,21 @@ function placeScrews(rnd, b, n) {
 // 形とねじを作る（色はまだ）。ねじは板ごとに 2 本以上、合計は 3 の倍数。
 // 板どうしが隠し合って外せないねじが残る置き方（peelable でない）なら、同じ形でねじだけ置き直す
 const SCREW_TRIES = 8;
-export function buildShape(rnd, kind, labels) {
-  const parts = BUILDERS[kind](rnd);
+export function buildShape(rnd, kind, labels, form = {}) {
+  const parts = BUILDERS[kind](rnd, form);
   addLabels(rnd, parts, labels);
   for (let t = 0; t < SCREW_TRIES; t++) {
-    const shape = placeAll(rnd, parts);
+    const shape = placeAll(rnd, parts, form.maxPer ?? 4);
     if (shape && peelable(shape)) return shape;
   }
   return null;
 }
 
-function placeAll(rnd, parts) {
+// maxPer: 板1枚のねじの上限（札は 2 本のまま）
+function placeAll(rnd, parts, maxPer) {
   const per = parts.map((b) => {
     const area = b.ext.reduce((m, x) => m * x, 1) / b.ext[b.axis];
-    const n = b.plate.id.startsWith('label') ? 2 : Math.min(4, 2 + Math.floor(rnd() * (area > 12 ? 3 : area > 4 ? 2 : 1)));
+    const n = b.plate.id.startsWith('label') ? 2 : Math.min(maxPer, 2 + Math.floor(rnd() * (area > 12 ? 3 : area > 4 ? 2 : 1)));
     return placeScrews(rnd, b, n);
   });
   // 2 本置けなかった板は捨てる
@@ -229,13 +233,16 @@ function assignColors(order, queue, win, noise, rnd) {
 }
 
 // opts: kind（'box' | 'shelf' | 'table'、省略で乱数）、colors（色の数）、labels（札の数）、
-//       win / noise（色の混ぜ方。大きいほど待機スロットを使う難しい割り当て）、budget（手順探索の打ち切り）
+//       win / noise（色の混ぜ方。大きいほど待機スロットを使う難しい割り当て）、budget（手順探索の打ち切り）、
+//       open / inner / maxPer（形の指定。箱の前を開けるか、中の仕切り・棚板を入れるか、板1枚のねじの上限）、
+//       alternate（箱の色を混ぜずに順に回す）
 export function generateLevel(seed, opts = {}) {
   const { colors = 4, labels = 2, win = 6, noise = 4, budget = 800 } = opts;
+  const form = { open: opts.open, inner: opts.inner, maxPer: opts.maxPer };
   for (let attempt = 0; attempt < SHAPE_TRIES; attempt++) {
     const rnd = mulberry32(seed * 7919 + attempt * 104729 + 1);
     const kind = opts.kind ?? pick(rnd, KINDS);
-    const shape = buildShape(rnd, kind, labels);
+    const shape = buildShape(rnd, kind, labels, form);
     if (!shape || shape.plates.length > 30) continue;
     // 色を決めずに外せる順番（1色だけの盤面として解く）
     const plain = { ...shape, screws: shape.screws.map((s) => ({ ...s, color: 'x' })), queue: new Array(shape.screws.length / 3).fill('x') };
@@ -244,7 +251,10 @@ export function generateLevel(seed, opts = {}) {
 
     const n = shape.screws.length / 3;
     const palette = shuffle(COLORS.slice(), rnd).slice(0, Math.min(colors, n));
-    const queue = shuffle(Array.from({ length: n }, (_, i) => palette[i % palette.length]), rnd);
+    const cyclic = Array.from({ length: n }, (_, i) => palette[i % palette.length]);
+    const shuffled = shuffle(cyclic.slice(), rnd);
+    // alternate: 箱の色を順に回す（2 色なら出ている 2 箱がいつも違う色になり、どの順に外しても待機スロットが要らない）
+    const queue = opts.alternate ? cyclic : shuffled;
     const make = (colorOf) => ({
       plates: shape.plates,
       screws: shape.screws.map((s) => ({ ...s, color: colorOf.get(s.id) })),
