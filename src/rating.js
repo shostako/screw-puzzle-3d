@@ -44,6 +44,11 @@ export function createPlayClock(now) {
       total = 0;
       since = null;
     },
+    // 止めた状態で、遊んだ時間を seconds にする（続きから戻すとき）
+    set(seconds) {
+      total = seconds * 1000;
+      since = null;
+    },
   };
 }
 
