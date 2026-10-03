@@ -4,6 +4,8 @@ import { dragRotation, zoomDistance } from './view.js';
 import { buildBoard } from './scene.js';
 import { createGame, hudOf, applyEvent } from './game.js';
 import { nearestScrew } from './pick.js';
+import { fixedBlocker, sweepHits } from './board.js';
+import { initPhysics, createPhysics, syncPlates, STEP } from './physics.js';
 import { BOX_LEVEL } from './levels/box.js';
 
 const LEVEL = BOX_LEVEL;
@@ -37,6 +39,7 @@ model.quaternion.setFromEuler(new THREE.Euler(0.45, -0.6, 0));
 scene.add(model);
 
 let board = null;
+let physics = null;   // 板の物理（盤面の座標で動く。やり直しで作り直す）
 
 let needsRender = true;
 function requestRender() {
@@ -126,17 +129,14 @@ function shake(obj) {
   });
 }
 
-// ねじ0本の板は、画面の下へ落ちて消える（物理は M5）
+// 物理で盤面の外まで落ちきった板は、立体から外して画面の下へ落とし、消す
 function dropPlate(obj) {
   scene.attach(obj);   // 立体の回転から外し、世界の下（画面の下）へ落とす
   const y0 = obj.position.y;
-  const spin = (Math.random() - 0.5) * 1.2;
-  const r0 = obj.rotation.z;
   const mats = [];
   obj.traverse((o) => o.material && mats.push(o.material));
   tween(900, (k) => {
     obj.position.y = y0 - 26 * k * k;
-    obj.rotation.z = r0 + spin * k;
     for (const m of mats) m.opacity = (m.userData.opacity0 ??= m.opacity) * Math.min(1, 2.2 - 2.2 * k);
   }, () => {
     scene.remove(obj);
@@ -209,7 +209,8 @@ function say(text, warn = false) {
 
 // ---- 1局 ----
 
-const game = createGame(LEVEL);
+// 外せるかは今の板の姿勢で調べ、詰みは動かない板だけで決める（回せばどけられる板があるうちは詰みにしない）
+const game = createGame(LEVEL, (id, st) => physics.blocker()(id, st), fixedBlocker(LEVEL));
 const colorOf = new Map(LEVEL.screws.map((s) => [s.id, s.color]));
 let hud = hudOf(game.state);   // いま画面に出している箱とスロット（演出の途中の様子）
 let queue = [];                // まだ見せていない出来事のまとまり { events, from: [x, y], status }
@@ -264,7 +265,10 @@ function tapScrew(id) {
   if (r.reason === 'blocked') {
     shake(obj);
     navigator.vibrate?.(30);
-    say('ほかの板に隠れていて外せない', true);
+    const by = movableBlockers(id);
+    say(by === 'loose' ? '落ちた板に隠れている。回して払い落とそう'
+      : by === 'hanging' ? 'ぶら下がった板に隠れている。回して動かそう'
+      : 'ほかの板に隠れていて外せない', true);
   } else if (r.reason === 'full') {
     shake(obj);
     slotsEl.classList.add('warn');
@@ -273,13 +277,22 @@ function tapScrew(id) {
   } else if (r.reason === 'ok') {
     const from = screenOf(obj);
     unscrew(obj);
-    for (const ev of r.events) {
-      if (ev.type === 'plate' && ev.to === 'fallen') dropPlate(board.plates.get(ev.plate));
-    }
+    syncPlates(physics, game.state);   // 1本になった板はぶら下がり、0本の板は落ち始める
+    requestRender();
     queue.push({ events: r.events, from, status: r.status });
     play();
   }
   return r.reason;
+}
+
+// ねじを隠しているのが動ける板だけなら、その種類（落ちた板があれば 'loose'、ぶら下がりだけなら 'hanging'）。
+// 固定の板にも隠れていれば null（回しても外せない）
+function movableBlockers(id) {
+  const present = new Set(physics.present());
+  const hits = sweepHits(LEVEL, id, { plates: LEVEL.plates.filter((p) => present.has(p.id)), poses: physics.poses() });
+  const modes = hits.map((p) => physics.mode(p));
+  if (!hits.length || modes.includes('fixed')) return null;
+  return modes.includes('loose') ? 'loose' : 'hanging';
 }
 
 function showEnd(status) {
@@ -302,7 +315,11 @@ function restart() {
   }
   board = buildBoard(LEVEL);
   model.add(board.root);
+  physics?.free();
+  physics = createPhysics(LEVEL);
+  stepClock = 0;
   game.restart();
+  syncPlates(physics, game.state);
   hud = hudOf(game.state);
   renderHud(hud);
   $('overlay').hidden = true;
@@ -389,7 +406,40 @@ canvas.addEventListener('wheel', (e) => {
 $('restart').addEventListener('click', restart);
 $('again').addEventListener('click', restart);
 
+// ---- 物理を進める ----
+
+const qInv = new THREE.Quaternion();
+const down = new THREE.Vector3();
+let stepClock = 0;      // 物理に渡していない時間（秒）
+let lastFrame = 0;
+const MAX_STEPS = 4;    // 1フレームで進める刻みの上限（遅い端末ではゆっくり動く。結果は刻みの数で決まる）
+
+function stepPhysics(now) {
+  // 画面の下（世界の -y）を、盤面の座標に直して重力の向きにする
+  qInv.copy(model.quaternion).invert();
+  down.set(0, -1, 0).applyQuaternion(qInv);
+  physics.setDown([down.x, down.y, down.z]);
+  const dt = lastFrame ? Math.min(0.1, (now - lastFrame) / 1000) : 0;
+  lastFrame = now;
+  if (!physics.moving()) { stepClock = 0; return; }
+  stepClock += dt;
+  let n = 0;
+  while (stepClock >= STEP && n < MAX_STEPS) {
+    for (const id of physics.step()) dropPlate(board.plates.get(id));
+    stepClock -= STEP;
+    n++;
+  }
+  if (n === MAX_STEPS) stepClock = 0;
+  for (const [id, pose] of Object.entries(physics.poses())) {
+    const obj = board.plates.get(id);
+    obj.position.set(...pose.position);
+    obj.quaternion.set(...pose.quaternion);
+  }
+  requestRender();
+}
+
 function frame(now) {
+  stepPhysics(now);
   if (tweens.size) {
     runTweens(now);
     needsRender = true;
@@ -401,16 +451,26 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-restart();
-resize();
-requestAnimationFrame(frame);
+async function start() {
+  await initPhysics();
+  restart();
+  resize();
+  requestAnimationFrame(frame);
+}
+start();
 
 // スクリーンショットのスクリプトが描画の完了や盤面の様子を知るための目印
 window.__app = {
   model,
   camera,
   game,
-  get rendered() { return !needsRender && !tweens.size && !playing; },
+  get rendered() { return !needsRender && !tweens.size && !playing && !physics?.moving(); },
+  // 立体の向きを Euler で直接決める（スクリーンショットで同じ向きから撮るため）
+  view(x, y, z, d = distance) {
+    model.rotation.set(x, y, z);
+    zoomBy(distance / d);
+  },
+  plateModes: () => Object.fromEntries(LEVEL.plates.map((p) => [p.id, physics.mode(p.id)])),
   tapScrew,
   screenOf: (id) => screenOf(board.screws.get(id)),
   visibleScrews,

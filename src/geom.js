@@ -115,3 +115,24 @@ export function cylinderSupport(from, to, r) {
     return l > 1e-12 ? add(end, scale(radial, r / l)) : end;
   };
 }
+
+// 回転行列から単位四元数 [x, y, z, w]（板の向きを物理ライブラリへ渡すため）
+export function matrixQuaternion(m) {
+  const [[a, b, c], [d, e, f], [g, h, i]] = m;
+  const tr = a + e + i;
+  let x, y, z, w;
+  if (tr > 0) {
+    const s = 0.5 / Math.sqrt(tr + 1);
+    w = 0.25 / s; x = (h - f) * s; y = (c - g) * s; z = (d - b) * s;
+  } else if (a > e && a > i) {
+    const s = 2 * Math.sqrt(1 + a - e - i);
+    w = (h - f) / s; x = 0.25 * s; y = (b + d) / s; z = (c + g) / s;
+  } else if (e > i) {
+    const s = 2 * Math.sqrt(1 + e - a - i);
+    w = (c - g) / s; x = (b + d) / s; y = 0.25 * s; z = (f + h) / s;
+  } else {
+    const s = 2 * Math.sqrt(1 + i - a - e);
+    w = (d - b) / s; x = (c + g) / s; y = (f + h) / s; z = 0.25 * s;
+  }
+  return [x, y, z, w];
+}

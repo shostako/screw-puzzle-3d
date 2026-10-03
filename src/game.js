@@ -6,9 +6,12 @@ import { blockerFor } from './board.js';
 
 // 1局。tap(id) は { reason, events, status } を返す。
 //   reason: 'ok' | 'blocked'（隠れている）| 'full'（入れる所が無い）| 'gone' | 'over'（クリアか詰みの後）
-export function createGame(level, isBlocked = blockerFor(level)) {
+// isBlocked はタップしたねじを外せるかの判定（物理があれば今の姿勢で調べる physics.blocker()）。
+// stuckBlocker は詰みを決める判定。物理で動く板がある間は、回せば外せるようになるかもしれないので、
+// 動かない板だけで判定する楽観的なもの（board.js の fixedBlocker）を渡す。省略すると isBlocked と同じ。
+export function createGame(level, isBlocked = blockerFor(level), stuckBlocker = isBlocked) {
   let state = newGame(level);
-  let current = status(state, isBlocked);
+  let current = status(state, stuckBlocker);
   return {
     get state() { return state; },
     get status() { return current; },
@@ -17,7 +20,7 @@ export function createGame(level, isBlocked = blockerFor(level)) {
       const r = removeScrew(state, id, isBlocked);
       if (r.ok) {
         state = r.state;
-        current = status(state, isBlocked);
+        current = status(state, stuckBlocker);
       }
       return { reason: r.reason, events: r.events, status: current };
     },
@@ -25,7 +28,7 @@ export function createGame(level, isBlocked = blockerFor(level)) {
     legal() { return legalMoves(state, isBlocked); },
     restart() {
       state = newGame(level);
-      current = status(state, isBlocked);
+      current = status(state, stuckBlocker);
     },
   };
 }
