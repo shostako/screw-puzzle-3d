@@ -33,7 +33,7 @@
 
 ## M2 ルールの核: 描画なしで1局を最後まで進められる
 
-- [ ] 完了
+- [x] 完了
 
 やること
 
@@ -182,3 +182,13 @@ SPEC の「後回しでよいもの」。2D 版の README の該当ルールを�
 - PR に貼るスクリーンショットは `docs/screenshots/<項目>/` に置いてコミットし、コミットの SHA 付きの URL で参照すると、ブランチが消えても表示が残る。
 - `scripts/ci.sh` は build の後に `scripts/check-dist.mjs` で `dist/` の外部 URL 参照（HTML の src/href、CSS の url/@import、JS の import()/fetch）を検査する。
 - favicon が無いとブラウザが `/favicon.ico` を取りに行き 404 になるので、`index.html` に `data:` の空アイコンを置いている。
+
+### M2 で分かったこと
+
+- ルールは `src/rules.js`。盤面は `{ plates: [{ id }], screws: [{ id, plate, color }], queue: [色...] }` の形で、`newGame(level)` で始め、`removeScrew(state, id, isBlocked)` で1手進める。状態は毎回新しいオブジェクトで返り、前の状態は書き換えない（戻る・ヒントの探索でそのまま使える）。
+- `removeScrew` は `events`（`toBox` / `toSlot` / `plate` / `boxFull` / `boxSpawn` / `slotToBox` を起きた順に）を返す。M4 の描画はこれを順に再生すれば、ねじが飛ぶ先・箱の入れ替わり・板の落下を追える。板の状態は `plateState(state, id)`（fixed / hanging / fallen）。
+- 外せない理由は `checkRemove` が返す `gone` / `blocked` / `full`。`blocked` のときは震えて拒否、`full` のときは待機スロットを光らせる（2D 版と同じ）。
+- 隠れ判定は `isBlocked(screwId, state)` を外から渡す。テストでは「このねじはこの板たちに隠れている、板が落ちれば見える」という表（`coverBlocker`）で代用している。M3 の 3D 判定も同じ形の関数にすれば、そのままルールにつながる。ぶら下がった板も隠し続ける扱いは、判定側で決める。
+- 詰みは「外せるねじが1本も無い」で決めている。2D 版の「スロットが満杯で入れられるねじが無い」は、最上階層のねじが必ず見えている 2D 版ではこれと同じ。3D ではスロットに空きがあっても全部隠れていることがありうるので、一般の形にした。板が揺れている間は詰みを決めない、という時間の扱いは M5 で物理側に持たせる。
+- 盤面は `validateLevel` が「色ごとのねじ = 箱の数 × 3」などを検査し、合わなければ例外にする。M6 の生成器の出力もこれを通す。
+- 2D 版の飛んでいる途中・フタが閉まる途中などの時間は持たず、1手で箱の入れ替わりまで済ませる。移しただけで満杯になった箱は、その場で消えて次の箱が出る（連鎖する）。
