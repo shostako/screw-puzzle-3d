@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { initPhysics, createPhysics, syncPlates, poseApply } from '../src/physics.js';
+import { initPhysics, createPhysics, syncPlates, poseApply, RESTLESS_STEPS } from '../src/physics.js';
+import { stageLevel } from '../src/stages.js';
 import { blockerFor, fixedBlocker, sweepHits } from '../src/board.js';
 import { newGame, removeScrew, status, legalMoves } from '../src/rules.js';
 import { createGame } from '../src/game.js';
@@ -230,5 +231,59 @@ describe('固定の盤面を物理つきで遊ぶ', () => {
     expect(live('p1', st)).toBe(sweepHits(BOX_LEVEL, 'p1', { poses: ph.poses() }).length > 0);
     expect(status(st, fixedBlocker(BOX_LEVEL))).toBe('playing');
     expect(legalMoves(st, live)).not.toContain('r1');
+  });
+});
+
+describe('板の動きはいつか落ち着く（M8）', () => {
+  // 重力の向き: 軸の6方向と斜め2つ
+  const DOWNS = [[0, -1, 0], [1, 0, 0], [0, 0, 1], [-1, 0, 0], [0, 0, -1], [0, 1, 0], [0.5, -0.7, 0.3], [-0.3, -0.6, -0.7]];
+  // 歯止め（RESTLESS_STEPS 刻みで止める）に頼らず、落ち着きの判定だけで止まるかを見る
+  const LIMIT = RESTLESS_STEPS - 100;
+
+  // ステージの手順どおりに外し、1本ごとに gap 刻み進めてから、重力を順に向け直して、そのたびに落ち着くまでの刻みを数える
+  function restless(stage, gap) {
+    const level = stageLevel(stage);
+    const ph = createPhysics(level);
+    let st = newGame(level);
+    syncPlates(ph, st);
+    const bad = [];
+    level.meta.solution.forEach((id, j) => {
+      let r = removeScrew(st, id, ph.blocker());
+      if (!r.ok) r = removeScrew(st, id, () => false);   // 物理で隠れていても、ここでは動きの落ち着きだけを見る
+      st = r.state;
+      syncPlates(ph, st);
+      for (let i = 0; i < gap; i++) ph.step();
+      for (const d of DOWNS) {
+        ph.setDown(d);
+        let n = 0;
+        while (n < LIMIT && (n < 5 || ph.moving())) { ph.step(); n++; }
+        if (n >= LIMIT) bad.push(`${j + 1} 本目（${id}）の後、下 ${d}`);
+      }
+    });
+    ph.free();
+    return bad;
+  }
+
+  // 速さだけで判定していたときに止まらなかった場面を含む: 隣の板に押し付けられて震え続ける側板（ステージ 1）、
+  // 隣の板の間で数度の幅で揺れ続ける側板（ステージ 4・19）、机の天板（ステージ 24）
+  for (const [stage, gap] of [[1, 3], [4, 1], [19, 1], [24, 4]]) {
+    it(`ステージ ${stage} の手順の途中、どの向きに倒しても止まる`, () => {
+      expect(restless(stage, gap)).toEqual([]);
+    }, 30000);
+  }
+
+  it('それでも止まらない動きは、最後の変化から RESTLESS_STEPS 刻みで止める', () => {
+    // 減衰の無い振り子: ぶら下げた板が軸のまわりに振れ続ける
+    const level = wall();
+    const ph = createPhysics(level, { hangDamping: 0 });
+    let st = newGame(level);
+    st = take(st, 'b', ph);
+    st = take(st, 'c', ph);
+    let n = 0;
+    while (ph.moving() && n < 5000) { ph.step(); n++; }
+    expect(n).toBe(RESTLESS_STEPS);
+    // 重力の向きが変われば、また動き出す
+    ph.setDown([1, 0, 0]);
+    expect(ph.moving()).toBe(true);
   });
 });

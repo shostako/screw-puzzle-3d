@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { dragRotation, zoomDistance, RAD_PER_PX, MIN_DISTANCE, MAX_DISTANCE } from '../src/view.js';
+import { dragRotation, zoomDistance, radPerPx, RAD_PER_PX, MIN_DISTANCE, MAX_DISTANCE } from '../src/view.js';
 
 describe('ドラッグから回転', () => {
   it('右へのドラッグは縦軸（+Y）まわりに回す', () => {
@@ -21,6 +21,20 @@ describe('ドラッグから回転', () => {
 
   it('動いていなければ回さない', () => {
     expect(dragRotation(0, 0).angle).toBe(0);
+  });
+});
+
+describe('画面の大きさに合わせた回る速さ', () => {
+  it('短い辺を端から端までなぞると半回転する（縦でも横でも）', () => {
+    expect(dragRotation(390, 0, radPerPx(390, 844)).angle).toBeCloseTo(Math.PI);
+    expect(dragRotation(0, 430, radPerPx(932, 430)).angle).toBeCloseTo(Math.PI);
+  });
+  it('小さい画面でも短い辺 320 より速くは回らない', () => {
+    expect(radPerPx(280, 500)).toBeCloseTo(Math.PI / 320);
+  });
+  it('大きさが分からなければ既定の速さ', () => {
+    expect(radPerPx(0, 0)).toBe(RAD_PER_PX);
+    expect(radPerPx(NaN, 800)).toBe(RAD_PER_PX);
   });
 });
 

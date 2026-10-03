@@ -34,6 +34,14 @@ const LOOSE_DAMPING = 0.3;
 // （体を sleep() で眠らせると、軸でつないだ板が起きたときに軸が外れることがあったので、眠らせはしない）
 const QUIET_SPEED = 0.15;
 const QUIET_STEPS = 30;
+// 速さだけでは、隣の板に押し付けられて接触が震え続ける板（速さは 0.1〜0.4 を行き来するが、その場から動かない）や、
+// 隣の板の間で 1〜2 度ほど揺れ続ける板が、いつまでも落ち着かない（M7 で見つかった）。
+// そこで、ある姿勢から [距離, 刻み] の組のどれかについて、その刻みの数のあいだ板のどの点もその距離より離れなければ、
+// 速さによらず落ち着いたとみなす（0.5 秒で 0.02、3 秒で 0.5。揺れ続ける板は数度の幅で振れていた）。動きは「中心の移動 + 回った角度 × 板の大きさ」で上から見積もる
+const STILL = [[0.02, QUIET_STEPS], [0.5, 180]];
+// それでも止まらない場合の歯止め: 最後に板の状態か重力の向きが変わってから RESTLESS_STEPS 刻み（20 秒）たったら、
+// 動いていないとみなす（画面は刻みを止める。立体を回して重力の向きが変われば、また動き出す）
+export const RESTLESS_STEPS = 1200;
 
 let ready = null;
 export function initPhysics() {
@@ -62,7 +70,8 @@ function plateShape(plate) {
     .setDensity(1);
 }
 
-export function createPhysics(level, { gravity = GRAVITY } = {}) {
+// hangDamping はぶら下がった板の減衰（テストで、揺れ続ける板を作るために 0 にする）
+export function createPhysics(level, { gravity = GRAVITY, hangDamping = HANG_DAMPING } = {}) {
   const world = new RAPIER.World({ x: 0, y: -gravity, z: 0 });
   world.timestep = STEP;
   const byId = new Map(level.plates.map((p) => [p.id, p]));
@@ -110,6 +119,23 @@ export function createPhysics(level, { gravity = GRAVITY } = {}) {
 
   let posesCache = null;
   const quiet = new Map();   // 板の id → 静かな刻みが続いた数
+  const still = new Map();   // 板の id → STILL の組ごとの { position, rotation, n }: その姿勢から距離以内にとどまった刻みの数
+  let restless = 0;          // 最後に板の状態か重力の向きが変わってからの刻みの数
+
+  // 板 id を「今から動き出しうる」とみなして、落ち着きの数えを始めから
+  function stir(id) {
+    quiet.set(id, 0);
+    still.delete(id);
+    restless = 0;
+  }
+
+  // 前の姿勢 a から今の体 b まで、板の点が動いた距離の上限
+  function moved(id, a, b) {
+    const t = b.translation(), r = b.rotation();
+    const dq = Math.abs(a.rotation.x * r.x + a.rotation.y * r.y + a.rotation.z * r.z + a.rotation.w * r.w);
+    const angle = 2 * Math.acos(Math.min(1, dq));
+    return length(sub(arr(t), a.position)) + angle * reach.get(id);
+  }
 
   const api = {
     // 板 plateId を、ねじ screwId を軸にぶら下げる（固定の板が1本になったとき）
@@ -117,7 +143,7 @@ export function createPhysics(level, { gravity = GRAVITY } = {}) {
       if (mode.get(plateId) !== 'fixed') throw new Error(`板 ${plateId} は固定でない（${mode.get(plateId)}）`);
       const s = screws.get(screwId);
       if (!s || s.plate !== plateId) throw new Error(`ねじ ${screwId} は板 ${plateId} のねじでない`);
-      const b = toDynamic(plateId, HANG_DAMPING);
+      const b = toDynamic(plateId, hangDamping);
       // 軸: 世界に固定した点（ねじの位置）と、板の局所でのねじの位置を、ねじの向きのまわりで回れるようにつなぐ
       const anchor = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(...s.position));
       const { center, u, v, n } = plateFrame(byId.get(plateId));
@@ -127,7 +153,7 @@ export function createPhysics(level, { gravity = GRAVITY } = {}) {
       const data = RAPIER.JointData.revoluteWithAxes(v3([0, 0, 0]), v3(local), v3(s.dir), v3(axisLocal));
       joints.set(plateId, { joint: world.createImpulseJoint(data, anchor, b, true), anchor });
       mode.set(plateId, 'hanging');
-      quiet.set(plateId, 0);
+      stir(plateId);
       posesCache = null;
     },
 
@@ -146,7 +172,7 @@ export function createPhysics(level, { gravity = GRAVITY } = {}) {
         b.wakeUp();
       } else throw new Error(`板 ${plateId} は固定でもぶら下がりでもない（${m}）`);
       mode.set(plateId, 'loose');
-      quiet.set(plateId, 0);
+      stir(plateId);
       posesCache = null;
     },
 
@@ -158,7 +184,7 @@ export function createPhysics(level, { gravity = GRAVITY } = {}) {
       const cur = world.gravity;
       if (Math.abs(cur.x - g.x) + Math.abs(cur.y - g.y) + Math.abs(cur.z - g.z) < 1e-6 * gravity) return;
       world.gravity = g;
-      for (const [id, b] of bodies) if (mode.get(id) === 'hanging' || mode.get(id) === 'loose') { b.wakeUp(); quiet.set(id, 0); }
+      for (const [id, b] of bodies) if (mode.get(id) === 'hanging' || mode.get(id) === 'loose') { b.wakeUp(); stir(id); }
     },
 
     get down() {
@@ -170,12 +196,19 @@ export function createPhysics(level, { gravity = GRAVITY } = {}) {
     step() {
       world.step();
       posesCache = null;
+      restless++;
       const gone = [];
       for (const [id, b] of bodies) {
         const m = mode.get(id);
         if (m !== 'hanging' && m !== 'loose') continue;
         const slow = length(arr(b.linvel())) < QUIET_SPEED && length(arr(b.angvel())) < QUIET_SPEED;
         quiet.set(id, slow ? (quiet.get(id) ?? 0) + 1 : 0);
+        const ss = still.get(id) ?? STILL.map(() => null);
+        STILL.forEach(([far], k) => {
+          if (ss[k] && moved(id, ss[k], b) <= far) ss[k].n++;
+          else ss[k] = { position: arr(b.translation()), rotation: b.rotation(), n: 0 };
+        });
+        still.set(id, ss);
         if (m === 'loose' && length(sub(arr(b.translation()), mid)) > radius + reach.get(id)) gone.push(id);
       }
       for (const id of gone) {
@@ -206,12 +239,15 @@ export function createPhysics(level, { gravity = GRAVITY } = {}) {
       return (posesCache = out);
     },
 
-    // 動ける板が1枚でも動いているか（Rapier が眠らせたか、しばらく静かなら動いていないとみなす）。
+    // 動ける板が1枚でも動いているか（Rapier が眠らせたか、しばらく静かか、その場から動いていなければ動いていないとみなす）。
     // 画面はこれが false の間、刻みを進めない。重力の向きが変われば setDown がまた動かす
     moving() {
+      if (restless >= RESTLESS_STEPS) return false;
       for (const [id, b] of bodies) {
         const m = mode.get(id);
-        if ((m === 'hanging' || m === 'loose') && !b.isSleeping() && (quiet.get(id) ?? 0) < QUIET_STEPS) return true;
+        if (m !== 'hanging' && m !== 'loose') continue;
+        if (b.isSleeping() || (quiet.get(id) ?? 0) >= QUIET_STEPS || STILL.some(([, n], k) => (still.get(id)?.[k]?.n ?? 0) >= n)) continue;
+        return true;
       }
       return false;
     },
