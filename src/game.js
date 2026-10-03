@@ -66,6 +66,12 @@ export function createGame(level, isBlocked = blockerFor(level), stuckBlocker = 
       if (r.screw) hints++;
       return r;
     },
+    // 保存した局面へ（resume.js の replayPath の結果と、外したねじの順番）。評価の回数は画面の側で持つ
+    resume({ state: st, history: states }, path) {
+      state = st;
+      history = states.map((s, i) => ({ state: s, screw: path[i] }));
+      current = status(state, stuckBlocker);
+    },
     restart() {
       state = newGame(level);
       current = status(state, stuckBlocker);

@@ -34,7 +34,7 @@
 //   fx-box.png       満杯の箱のふたが閉まり、星が散ったところ
 //   fx-drop.png      盤面の外へ落ちた板が回りながら画面の下へ消えていくところ
 //   あわせて、演出の後に立体の描く物の数が増えていない（板が消えた分だけ減る）ことを確かめる
-//   （題材、D4。部品の木で組んだ車・家・ぶた ?seed=番号&kind=car|house|animal）
+//   （題材、D4・E7。部品の木で組んだ車・家・ぶた・ロボット・飛行機・船・ロケット・機関車・カメラ ?seed=番号&kind=car|house|animal|robot|plane|ship|rocket|train|camera）
 //   theme-<題材>.png        開いた直後
 //   theme-<題材>-below.png  下から見上げた向き（車輪・脚の裏のねじ）
 //   theme-car-midway.png / theme-car-cleared.png  車を手順どおりに 9 本外したところと、クリアの画面
@@ -68,6 +68,13 @@
 //   settings-clear.png  「記録を消す」を1回押して、確かめの文字に変わったところ
 //   あわせて、回す速さ「はやい」で同じ指の動きが ふつう の約 1.4 倍回ること、画質「軽い」で描く解像度が 1 になること、
 //   設定が再読み込みの後も残ること、記録を消すとステージ 1 に戻り設定は残ることを確かめる
+//   （続きから遊べる、E10。保存の無い新しい端末として開き、途中まで外してから再読み込みする）
+//   resume-stage-before.png / resume-stage-after.png    ステージ 8（車）を 9 本外して向きを変えたところと、再読み込みした直後
+//   resume-random-before.png / resume-random-after.png  おまかせ（やさしい #777）を 6 本外したところと、再読み込みした直後
+//   resume-daily-before.png / resume-daily-after.png    今日の1問を 6 本外したところと、再読み込みした直後
+//   resume-daily-undo.png  続きから戻した今日の1問で、保存前の手を2手戻したところ
+//   あわせて、再読み込みの後に同じ遊び方・同じ局面（外したねじ・箱・スロット）・同じ板の状態と姿勢・同じ向き・同じ時間（遊んだ秒が続く）で
+//   続くこと、続きからクリアできて保存が消えること、壊れた保存は黙って最初から始まることを確かめる
 //   （構図と手触り、E1。ステージ 1・8 の車・10 の家・12 のぶた・37 を開いた直後）
 //   frame-<ステージ>.png     立体が HUD とボタン列の間の空きに収まっているところ（空きの 8 割前後を占めることを確かめる）
 //   frame-size-<名前>.png    小さめ 360×640・大きめ 430×932 でステージ 8 を開いた直後
@@ -83,7 +90,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -313,7 +320,8 @@ const genShots = [
 ];
 
 // 題材（D4）
-const THEMED = [['car', 1], ['house', 1], ['animal', 1]];
+// E7 で足した題材（ロボット・飛行機・船・ロケット・機関車・カメラ）も同じく開いた直後と下から
+const THEMED = [['car', 1], ['house', 1], ['animal', 1], ['robot', 1], ['plane', 1], ['ship', 1], ['rocket', 1], ['train', 1], ['camera', 1]];
 const themeShots = [
   ...THEMED.flatMap(([kind, seed]) => [
     { name: `theme-${kind}`, query: `?seed=${seed}&kind=${kind}`, act: async () => {} },
@@ -1245,6 +1253,104 @@ async function undoShots(context, errors, outside) {
   await context.close();
 }
 
+// 続きから遊べる（E10）。途中まで外して再読み込みし、同じ局面・同じ時間で続くことを確かめる
+async function resumeShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const save = async (name) => {
+    const path = join(outDir, `${name}.png`);
+    await page.screenshot({ path });
+    console.log(`screenshot: ${path}`);
+  };
+  // 比べる局面: 遊び方・題名・外した順・ねじの居場所・箱とスロット・板の状態と姿勢・向き・ヒントと戻るの回数
+  const look = () => page.evaluate(() => {
+    const a = window.__app, st = a.game.state;
+    return {
+      mode: a.mode, stage: a.stage, title: document.getElementById('title').textContent + document.getElementById('subtitle').textContent,
+      path: a.game.path, where: st.where, boxes: st.boxes, slots: st.slots, modes: a.plateModes(), poses: a.platePoses(),
+      q: a.model.quaternion.toArray(),
+    };
+  });
+  const near = (a, b, eps = 1e-6) => JSON.stringify(a, (k, v) => (typeof v === 'number' ? Math.round(v / eps) : v)) === JSON.stringify(b, (k, v) => (typeof v === 'number' ? Math.round(v / eps) : v));
+  async function reloadAndCompare(name, go) {
+    await waitRendered(page);
+    await save(`resume-${name}-before`);
+    const before = await look();
+    const seconds = await page.evaluate(() => window.__app.playSeconds);
+    await go();
+    await waitRendered(page);
+    const after = await look();
+    const resumed = await page.evaluate(() => window.__app.resumed);
+    const secondsAfter = await page.evaluate(() => window.__app.playSeconds);
+    if (!resumed || resumed.moves !== before.path.length) throw new Error(`${name}: 続きから戻っていない ${JSON.stringify(resumed)}`);
+    if (resumed.physics !== 'snapshot') throw new Error(`${name}: 物理の写しから戻っていない`);
+    for (const k of ['mode', 'stage', 'title', 'path', 'where', 'boxes', 'slots', 'modes']) {
+      if (JSON.stringify(before[k]) !== JSON.stringify(after[k])) throw new Error(`${name}: 再読み込みで ${k} が変わった ${JSON.stringify(before[k])} → ${JSON.stringify(after[k])}`);
+    }
+    if (!near(before.q, after.q)) throw new Error(`${name}: 再読み込みで向きが変わった`);
+    if (!near(before.poses, after.poses, 1e-4)) throw new Error(`${name}: 再読み込みで板の姿勢が変わった`);
+    if (!(secondsAfter >= seconds - 0.05 && secondsAfter < seconds + 3)) throw new Error(`${name}: 遊んだ時間が続いていない ${seconds} → ${secondsAfter}`);
+    await save(`resume-${name}-after`);
+    console.log(`resume ${name}: ${before.path.length} 手・${seconds.toFixed(1)} 秒 → ${secondsAfter.toFixed(1)} 秒`);
+  }
+
+  // ステージ 8（車）。?stage= で開き、URL の指定の無い入口から開き直す（アプリの再開と同じ）
+  await page.goto(url + '?stage=8');
+  await waitRendered(page);
+  await playSolution(page, 9);
+  await page.evaluate(() => window.__app.view(0.2, 0.9, 0, 21));
+  await reloadAndCompare('stage', () => page.goto(url));
+  // 続きからクリアすると保存は消え、次に開くとステージ 9
+  await playSolution(page);
+  await page.waitForSelector('#overlay:not([hidden]) #next:not([hidden])');
+  if (await page.evaluate(() => localStorage.getItem('screw-puzzle-3d.resume')) !== null) throw new Error('クリアしても途中の保存が残っている');
+  await page.goto(url);
+  await waitRendered(page);
+  if (await page.evaluate(() => [window.__app.stage, window.__app.resumed, window.__app.moves].join()) !== '9,,0') throw new Error('クリアの後に開くとステージ 9 の最初にならない');
+
+  // おまかせ
+  await page.evaluate(() => window.__app.loadMode({ type: 'random', no: 777, difficulty: 'easy' }));
+  await waitRendered(page);
+  await playSolution(page, 6);
+  await reloadAndCompare('random', () => page.reload());
+
+  // 今日の1問
+  const key = await page.evaluate(() => { const d = new Date(); return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); });
+  await page.evaluate((key) => window.__app.loadMode({ type: 'daily', key }), key);
+  await waitRendered(page);
+  await playSolution(page, 6);
+  await reloadAndCompare('daily', () => page.reload());
+  // 保存前の手へ戻す（物理の写しは無いので、ルールの局面から姿勢を作り直す）
+  await page.evaluate(() => { window.__app.undo(); window.__app.undo(); });
+  await waitRendered(page);
+  if (await page.evaluate(() => [window.__app.moves, window.__app.game.status].join()) !== '4,playing') throw new Error('続きから戻した局面で2手戻せない');
+  await save('resume-daily-undo');
+  // 戻した後の局面も保存され、開き直すと同じ所から
+  const undone = await look();
+  await page.reload();
+  await waitRendered(page);
+  if (JSON.stringify((await look()).where) !== JSON.stringify(undone.where)) throw new Error('戻した後の局面が保存されていない');
+
+  // 盤面の作りが変わった版の後（指紋が合わない）は、黙ってその盤面の最初から。
+  // 閉じる時（pagehide）にも保存するので、保存しない固定の箱（?level=box）のページを別に開いて、ゲームのページを閉じてから書き換える
+  const other = await context.newPage();
+  other.on('pageerror', (e) => errors.push(String(e)));
+  await other.goto(url + '?level=box');
+  await waitRendered(other);
+  await page.close();
+  await other.evaluate(() => {
+    const r = JSON.parse(localStorage.getItem('screw-puzzle-3d.resume'));
+    localStorage.setItem('screw-puzzle-3d.resume', JSON.stringify({ ...r, sig: '00000000' }));
+  });
+  await other.goto(url);
+  await waitRendered(other);
+  const fresh = await other.evaluate(() => [window.__app.mode.type, window.__app.resumed, window.__app.moves].join());
+  if (fresh !== 'daily,,0') throw new Error(`合わない保存で最初から始まらない: ${fresh}`);
+  await context.close();
+}
+
 const server = await serve();
 const url = `http://127.0.0.1:${server.address().port}/`;
 const browser = await chromium.launch({
@@ -1293,6 +1399,7 @@ try {
   if (only('rating')) await ratingShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('random')) await randomShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('settings')) await settingsShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('resume')) await resumeShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('frame')) await frameShots(browser, errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);

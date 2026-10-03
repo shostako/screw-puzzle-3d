@@ -9,11 +9,12 @@ import { createGame, hudOf, applyEvent, rewindPoint } from './game.js';
 import { safeBlocker } from './safe.js';
 import { nearestScrew } from './pick.js';
 import { fixedBlocker, sweepHits } from './board.js';
-import { initPhysics, createPhysics, syncPlates, STEP } from './physics.js';
+import { initPhysics, createPhysics, syncPlates, settle, STEP } from './physics.js';
 import { generateLevel, ALL_KINDS } from './generator.js';
 import { BOX_LEVEL } from './levels/box.js';
 import { stageLevel, START_VIEW as START_EULER } from './stages.js';
 import { createProgress, deviceStorage } from './progress.js';
+import { createResume, restoreRecord, levelSignature, encodeSnapshot, decodeSnapshot, physicsAgrees } from './resume.js';
 import { createSettings, clearRecords, SPEEDS, QUALITIES } from './settings.js';
 import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, MAX_RANDOM, isRandomNo, dateKey, isDateKey, dateLabel, dailyBestKey } from './random.js';
 import { rate, clock, createPlayClock, createBests, MAX_STARS } from './rating.js';
@@ -34,8 +35,17 @@ const progress = createProgress(freePlay ? null : deviceStorage());
 const settings = createSettings(deviceStorage());
 const quality = () => QUALITIES[settings.get('quality')];
 const bests = createBests(freePlay ? null : deviceStorage());
+// 遊んでいる途中の局面（E10）。URL で遊び方を決めていなければ、保存した局面の遊び方とステージから続ける
+const resumeStore = createResume(freePlay ? null : deviceStorage());
+const askedByUrl = ['stage', 'random', 'daily'].some((k) => query.has(k));
+let pending = freePlay || askedByUrl ? null : resumeStore.load();
+if (pending?.mode.type === 'random' && !DIFFICULTIES[pending.mode.difficulty]) pending = null;
+if (pending?.mode.type === 'daily' && !isDateKey(pending.mode.key)) pending = null;
+// ステージをまだ1本も外していなければ、続きではなく到達したステージから（おまかせ・今日の1問は外す前でも遊び方を続ける）
+if (pending?.mode.type === 'stage' && !pending.path.length) pending = null;
 const askedStage = Number.parseInt(query.get('stage') ?? '', 10);
-let stage = Number.isInteger(askedStage) && askedStage >= 1 ? askedStage : progress.stage;
+let stage = Number.isInteger(askedStage) && askedStage >= 1 ? askedStage
+  : pending?.mode.type === 'stage' ? pending.stage : progress.stage;
 
 // 今の遊び方: { type: 'stage' } / { type: 'daily', key: 日付の数 } / { type: 'random', no: 番号, difficulty } / { type: 'free' }
 const today = () => dateKey(new Date());
@@ -49,7 +59,7 @@ function askedMode() {
   if (isRandomNo(no)) return { type: 'random', no, difficulty: DIFFICULTIES[query.get('diff')] ? query.get('diff') : 'normal' };
   return { type: 'stage' };
 }
-let mode = askedMode();
+let mode = pending ? { ...pending.mode } : askedMode();
 // おまかせの次の番号（端末の乱数で選ぶ。盤面は番号で決まる）
 const freshRandomNo = () => 1 + Math.floor(Math.random() * MAX_RANDOM);
 
@@ -569,8 +579,10 @@ const tally = { hints: 0, rewinds: 0 };
 const countHint = () => { tally.hints++; };
 const countRewind = () => { tally.rewinds++; };
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) playClock.pause();
-  else if (game.status === 'playing' && !loading && $('menu').hidden) playClock.resume();
+  if (document.hidden) {
+    playClock.pause();
+    saveResume();   // Android は裏に回したアプリを落とすことがあるので、裏へ回る時に保存する
+  } else if (game.status === 'playing' && !loading && $('menu').hidden) playClock.resume();
 });
 
 let hud = hudOf(game.state);   // いま画面に出している箱とスロット（演出の途中の様子）
@@ -670,6 +682,7 @@ function tapScrew(id) {
     if (r.status !== 'playing') playClock.pause();   // 時間は決着のタップまで（演出を待つ間は数えない）
     queue.push({ events: r.events, obj, out, status: r.status });
     play();
+    saveResume();
   }
   showUndo();
   return r.reason;
@@ -735,6 +748,7 @@ function showHint() {
     return;
   }
   countHint();   // クリアの評価で星を1つ減らす
+  saveResume();
   const id = r.screw;
   const obj = ringScrew(id, THEME.hint, HINT_MS);
   cue('hint');
@@ -842,6 +856,7 @@ async function loadMode(next) {
   hint.textContent = `${modeTitle().join(' ').trim()} を組み立て中…`;
   await wait(30);
   LEVEL = levelFor();
+  levelSig = null;
   newGameFor(LEVEL);
   homing = null;
   stopSpin();
@@ -851,6 +866,7 @@ async function loadMode(next) {
   showIdleHint();
   loading = false;
   showUndo();
+  saveResume();
 }
 
 // クリアの画面の「次へ」
@@ -919,6 +935,7 @@ function restart() {
   seatMascot(false);
   syncPlates(physics, game.state);
   showState();
+  saveResume();
 }
 
 // 今の局面（game と physics）を画面に出す。外したねじは隠し、消えた板は外し、動ける板は今の姿勢に置く
@@ -945,7 +962,9 @@ function showState() {
 function rewindTo(k) {
   const ended = game.status !== 'playing';
   if (!game.rewind(k)) return false;
-  physics.restore(snaps[k]);
+  // 続きから戻した局面より前の手は、物理の写しを保存していないので、ルールの状態から姿勢を作り直す
+  if (snaps[k]) physics.restore(snaps[k]);
+  else resettle(game.state);
   snaps.length = k;
   countRewind();
   if (ended) {
@@ -956,8 +975,88 @@ function rewindTo(k) {
   rebuildBoard();
   showState();
   cue('undo');
+  saveResume();
   return true;
 }
+
+// ---- 続きから遊ぶ（E10） ----
+
+// 今の局面を保存する。外す手・戻す・ヒント・物理が落ち着いた時・裏へ回る時に呼ぶ。
+// クリアしたら消す（次に開くとステージの続きから。おまかせ・今日の1問の後もステージへ）
+let levelSig = null;
+function saveResume() {
+  if (!started || loading || freePlay || pending) return;
+  if (game.status === 'cleared') {
+    resumeStore.clear();
+    return;
+  }
+  levelSig ??= levelSignature(LEVEL);
+  let snap = null;
+  try {
+    snap = encodeSnapshot(physics.snapshot());
+  } catch {
+    snap = null;   // 写せなければ、戻すときにルールの状態から姿勢を作る
+  }
+  resumeStore.save({
+    mode: { ...mode },
+    stage,
+    sig: levelSig,
+    path: game.path,
+    seconds: playClock.seconds,
+    hints: tally.hints,
+    rewinds: tally.rewinds,
+    view: { q: model.quaternion.toArray(), k: zoomK },   // k は寄り引きの比（E1。距離は画面と盤面で決め直す）
+    physics: snap,
+  });
+}
+addEventListener('pagehide', saveResume);
+
+// 物理をルールの状態から作り直し、今の重力の向きで落ち着くまで進める（写しが無い・使えないとき）
+function resettle(state) {
+  try {
+    physics?.free();
+  } catch {
+    // 写しから戻すのに失敗した物理は、すでに壊れていることがある
+  }
+  physics = createPhysics(LEVEL);
+  syncPlates(physics, state);
+  applyDown();
+  settle(physics);
+}
+
+// 保存した局面へ戻す。戻せなければ false（盤面は restart() の最初の局面のまま）
+function resumeFrom(record) {
+  const r = restoreRecord(record, LEVEL);
+  if (!r) return false;
+  game.resume(r, r.path);
+  const q = r.view?.q;
+  if (Array.isArray(q) && q.length === 4 && q.every(Number.isFinite) && Math.hypot(...q) > 0.5) model.quaternion.fromArray(q).normalize();
+  // 寄り引きは比で戻す（E1 より前の保存の d は、距離の決め方が変わったので使わず、収めた距離のまま）
+  if (Number.isFinite(r.view?.k) && r.view.k > 0) zoomBy(zoomK / r.view.k);
+  let restored = false;
+  const snap = decodeSnapshot(r.physics);
+  if (snap) {
+    try {
+      physics.restore(snap);
+      restored = physicsAgrees(game.state, (id) => physics.mode(id));
+    } catch {
+      restored = false;
+    }
+  }
+  if (!restored) resettle(game.state);
+  snaps = r.path.map(() => null);
+  tally.hints = r.hints;
+  tally.rewinds = r.rewinds;
+  playClock.set(r.seconds);
+  if (game.status === 'playing' && !document.hidden) playClock.resume();
+  rebuildBoard();
+  showState();
+  if (game.status !== 'playing') showEnd(game.status);
+  else if (r.path.length) say('続きから', false, 2000);
+  resumed = { moves: r.path.length, physics: restored ? 'snapshot' : 'settled' };
+  return true;
+}
+let resumed = null;   // 続きから戻したときの様子（スクリーンショットのスクリプトが見る）
 
 function showRewindButtons(on) {
   $('rewind').hidden = !on;
@@ -1126,7 +1225,9 @@ const feedback = createFeedback(settings);
 // 板の大きさ（面の面積の平方根）。落ちる音の音程に使う
 function plateSize(id) {
   const p = LEVEL.plates.find((q) => q.id === id);
-  return p ? Math.sqrt(p.size[0] * p.size[1]) : undefined;
+  if (!p) return undefined;
+  // 円柱（D4 の車輪など）は size を持たないので、円の面積から
+  return p.shape === 'cylinder' ? Math.sqrt(Math.PI) * p.radius : Math.sqrt(p.size[0] * p.size[1]);
 }
 
 // マスコット「ネジまる」（D3）。左下の小さなキャンバスに別の描き手で描き、演出の時計で動く。
@@ -1248,11 +1349,15 @@ let stepClock = 0;      // 物理に渡していない時間（秒）
 let lastFrame = 0;
 const MAX_STEPS = 4;    // 1フレームで進める刻みの上限（遅い端末ではゆっくり動く。結果は刻みの数で決まる）
 
-function stepPhysics(now) {
-  // 画面の下（世界の -y）を、盤面の座標に直して重力の向きにする
+// 画面の下（世界の -y）を、盤面の座標に直して重力の向きにする
+function applyDown() {
   qInv.copy(model.quaternion).invert();
   down.set(0, -1, 0).applyQuaternion(qInv);
   physics.setDown([down.x, down.y, down.z]);
+}
+
+function stepPhysics(now) {
+  applyDown();
   const dt = lastFrame ? Math.min(0.1, (now - lastFrame) / 1000) : 0;
   lastFrame = now;
   if (!physics.moving()) { stepClock = 0; return; }
@@ -1288,14 +1393,22 @@ function frame(now) {
     lastDraw = now;
   }
   // 物理が動いているか演出の途中なら次のフレームも。止まっていればここで止め、次の操作（requestRender）で再開する
-  if (physics.moving() || tweens.size || needsRender || inertia.active) wake();
+  const moving = physics.moving();
+  if (wasMoving && !moving) saveResume();   // 板が落ち着いた姿勢を保存する
+  wasMoving = moving;
+  if (moving || tweens.size || needsRender || inertia.active) wake();
   else lastFrame = 0;
 }
+let wasMoving = false;
 
 async function start() {
   await initPhysics();
   started = true;
+  const record = pending;
   restart();
+  pending = null;
+  if (record) resumeFrom(record);
+  saveResume();
   resize();
   wake();
 }
@@ -1354,10 +1467,14 @@ window.__app = {
     return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
   },
   plateModes: () => Object.fromEntries(LEVEL.plates.map((p) => [p.id, physics.mode(p.id)])),
+  platePoses: () => physics.poses(),
   tapScrew,
   undo: undoOne,
   rewind: rewindToSolvable,
   get moves() { return game.moves; },
+  // 続きから戻したか（{ moves: 戻した手の数, physics: 'snapshot' | 'settled' }）。戻していなければ null
+  get resumed() { return resumed; },
+  saveResume,
   // 戻した後の分かれ目の赤い輪が付いているねじ
   marked: () => (hintRing?.userData.color === THEME.undo ? hintRing.parent.userData.screwId : null),
   deadEnd: showDeadEnd,
