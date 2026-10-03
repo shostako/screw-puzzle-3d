@@ -11,7 +11,8 @@ export const SCREW_COLORS = Object.fromEntries(
   Object.entries(THEME.screwColors).map(([name, c]) => [name, new THREE.Color(c).getHex()]),
 );
 
-export function buildBoard(level) {
+// opts.knurl: ねじの頭にローレットを刻むか（設定の画質「軽い」では刻まず、頭の三角形を減らす）
+export function buildBoard(level, { knurl = true } = {}) {
   const root = new THREE.Group();
   const plates = new Map(), screws = new Map();
 
@@ -25,7 +26,7 @@ export function buildBoard(level) {
 
   for (const s of level.screws) {
     const r = s.radius ?? level.screwRadius ?? SCREW_RADIUS;
-    const obj = screwObject(s, r);
+    const obj = screwObject(s, r, knurl);
     obj.userData.screwId = s.id;
     obj.userData.radius = r;   // 頭の半径（外した印の大きさを合わせる）
     screws.set(s.id, obj);
@@ -110,6 +111,7 @@ export const BOLT = {
   socket: 0.52,       // 六角穴の外接円の半径 × r（対辺は √3 倍で 0.9r）
   socketDepth: 0.55,  // 六角穴の深さ × 頭の高さ
   knurls: 30,         // ローレットの山の数
+  plainSteps: 24,     // ローレットを刻まない頭（画質「軽い」）の外周の角の数
   shaft: 1.2,         // ねじ部（谷の径）× r。山の分を足してねじ径 1.33r
   length: 0.6,        // ねじ部の長さ × r（板の厚み 0.3 の中に収まる長さ。長いと箱の内側に突き出て見える）
   sink: 0.3,          // 頭を板に沈める量 × r（板から出るのは 0.9r）
@@ -126,10 +128,11 @@ const hexPoints = (rr) => Array.from({ length: 6 }, (_, i) => {
   return [Math.cos(a) * rr, Math.sin(a) * rr];
 });
 
-// 頭: ローレットの輪郭に六角の穴を抜いて押し出す（+Y が頭の上、y = 0 が座面）
-function headGeometry(r) {
-  return cached(`head:${r}`, () => {
-    const h = BOLT.headHeight * r, N = BOLT.knurls, amp = 0.03 * r, steps = N * 4;
+// 頭: ローレットの輪郭に六角の穴を抜いて押し出す（+Y が頭の上、y = 0 が座面）。
+// knurl が false なら刻みの無い丸（BOLT.plainSteps 角形）にして三角形を減らす（設定の画質「軽い」）
+function headGeometry(r, knurl = true) {
+  return cached(`head:${r}:${knurl}`, () => {
+    const h = BOLT.headHeight * r, N = knurl ? BOLT.knurls : 0, amp = 0.03 * r, steps = knurl ? N * 4 : BOLT.plainSteps;
     const shape = new THREE.Shape();
     for (let i = 0; i < steps; i++) {
       const a = (i / steps) * Math.PI * 2;
@@ -211,12 +214,13 @@ const shaftMaterial = () => cached('shaftMat', () => new THREE.MeshStandardMater
   color: THEME.bolt.steel, roughness: 0.32, metalness: 0.9,
 }));
 
-function screwObject(s, r) {
+function screwObject(s, r, knurl = true) {
   const g = new THREE.Group();
   const color = SCREW_COLORS[s.color] ?? 0x888888;
   // 頭と六角穴は板に沈めた分だけ下げる。当たり判定（タップ）は頭と六角穴で取る
   const sink = BOLT.sink * r;
-  const head = new THREE.Mesh(headGeometry(r), headMaterial(color));
+  const head = new THREE.Mesh(headGeometry(r, knurl), headMaterial(color));
+  head.userData.part = 'head';
   head.position.y = -sink;
   g.add(head);
   const socket = new THREE.Mesh(socketGeometry(r), socketMaterial());
@@ -231,4 +235,12 @@ function screwObject(s, r) {
   g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...s.dir).normalize());
   g.position.set(...s.position);
   return g;
+}
+
+// 作った盤面のねじの頭を、ローレットあり・なしに差し替える（遊んでいる途中で画質を変えたとき。盤面は作り直さない）
+export function setKnurl(board, knurl) {
+  for (const g of board.screws.values()) {
+    const head = g.children.find((c) => c.userData.part === 'head');
+    if (head) head.geometry = headGeometry(g.userData.radius, knurl);
+  }
 }
