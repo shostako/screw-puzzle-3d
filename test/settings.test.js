@@ -11,9 +11,9 @@ function memoryStorage(init = {}) {
 }
 
 describe('設定', () => {
-  it('既定: 音と振動は入り、回す速さはふつう、画質は自動、ネジまるは出す', () => {
+  it('既定: 音と振動は入り、回す速さはふつう、画質は自動、ネジまるは出す、ねじ穴は全部六角', () => {
     const s = createSettings(memoryStorage());
-    expect(s.all()).toEqual({ sound: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true });
+    expect(s.all()).toEqual({ sound: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true, drives: false });
     expect(DEFAULTS).toEqual(s.all());
   });
 
@@ -24,7 +24,9 @@ describe('設定', () => {
     expect(s.set('speed', 'fast')).toBe(true);
     expect(s.set('quality', 'light')).toBe(true);
     expect(s.set('mascot', false)).toBe(true);
-    expect(createSettings(st).all()).toEqual({ sound: true, vibrate: false, speed: 'fast', quality: 'light', mascot: false });
+    expect(s.set('drives', true)).toBe(true);
+    expect(s.set('drives', 'yes')).toBe(false);
+    expect(createSettings(st).all()).toEqual({ sound: true, vibrate: false, speed: 'fast', quality: 'light', mascot: false, drives: true });
   });
 
   it('知らない値は受け付けず、壊れた保存は既定に戻す', () => {

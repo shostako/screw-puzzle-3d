@@ -68,6 +68,11 @@
 //   settings-clear.png  「記録を消す」を1回押して、確かめの文字に変わったところ
 //   あわせて、回す速さ「はやい」で同じ指の動きが ふつう の約 1.4 倍回ること、画質「軽い」で描く解像度が 1 になること、
 //   設定が再読み込みの後も残ること、記録を消すとステージ 1 に戻り設定は残ることを確かめる
+//   （質感と光、E2。保存の無い新しい端末として ?stage=番号 を開く）
+//   look-stage<番号>.png       ステージ 1・8（車）・10（家）・12（ぶた）・37（6 色）を開いた直後
+//   look-stage<番号>-gray.png  同じ画面を色を抜いて（グレースケール）撮ったもの
+//   look-drives<番号>.png / -gray.png / -zoom.png  設定「ねじ穴の形」を「色ごと」にしたステージ 37・23（6 色）と、色を抜いたもの、立体の拡大。
+//                色を抜いても、穴の形でねじの色の組が見分けられるか
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -77,7 +82,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、look は質感と光
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -1125,6 +1130,37 @@ async function undoShots(context, errors, outside) {
   await context.close();
 }
 
+async function lookShots(browser, errors, outside) {
+  // LOOK=1,8 のように撮るステージを絞れる
+  const pick = process.env.LOOK?.split(',').map(Number);
+  const runs = [1, 8, 10, 12, 37].map((n) => ({ n, drives: false })).concat([37, 23].map((n) => ({ n, drives: true })))
+    .filter(({ n }) => !pick || pick.includes(n));
+  for (const { n, drives } of runs) {
+    const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    if (drives) await context.addInitScript(() => localStorage.setItem('screw-puzzle-3d.settings', JSON.stringify({ drives: true })));
+    const page = await context.newPage();
+    page.on('pageerror', (e) => errors.push(String(e)));
+    page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+    page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+    await page.goto(`${url}?stage=${n}`);
+    await waitRendered(page);
+    for (const gray of [false, true]) {
+      if (gray) await page.evaluate(() => { document.documentElement.style.filter = 'grayscale(1)'; });
+      const file = join(outDir, `look-${drives ? 'drives' : 'stage'}${n}${gray ? '-gray' : ''}.png`);
+      await page.screenshot({ path: file });
+      console.log(`screenshot: ${file}`);
+    }
+    if (drives) {
+      const icons = await page.evaluate(() => document.body.classList.contains('drives'));
+      if (!icons) throw new Error('設定「色ごと」で body に drives が付いていない');
+      const file = join(outDir, `look-drives${n}-zoom.png`);
+      await page.screenshot({ path: file, clip: { x: 40, y: 330, width: 310, height: 310 } });
+      console.log(`screenshot: ${file}`);
+    }
+    await context.close();
+  }
+}
+
 const server = await serve();
 const url = `http://127.0.0.1:${server.address().port}/`;
 const browser = await chromium.launch({
@@ -1173,6 +1209,7 @@ try {
   if (only('rating')) await ratingShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('random')) await randomShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('settings')) await settingsShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('look')) await lookShots(browser, errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);
   if (errors.length) throw new Error(`ページでエラー: ${errors.join(' / ')}`);
