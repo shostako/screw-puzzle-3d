@@ -363,12 +363,14 @@ export function frameCamera(camera, aspect) {
 }
 
 // 画面に出すネジまる。canvas に描き、clock()（ミリ秒、演出の時計）で動く。
-// 動いている間は毎フレーム、待機中は 1/2 の間隔で描く（小さなキャンバスなので軽いが、待機は長いので電池を気にする）
-export function createMascot(canvas, { clock = () => performance.now(), environment = null } = {}) {
-  const DPR = Math.min(2, window.devicePixelRatio || 1);
+// 動いている間は毎フレーム、待機中は 1/idleEvery の間隔で描く（小さなキャンバスなので軽いが、待機は長いので電池を気にする）。
+// maxRatio は描く解像度の上限、idleEvery は待機中に何フレームに1回描くか（設定の画質で変える）
+export function createMascot(canvas, { clock = () => performance.now(), environment = null, maxRatio = 2, idleEvery = 2 } = {}) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
   renderer.setClearColor(0x000000, 0);
-  renderer.setPixelRatio(DPR);
+  const ratioFor = (max) => Math.min(max, window.devicePixelRatio || 1);
+  renderer.setPixelRatio(ratioFor(maxRatio));
+  let enabled = true;   // 設定で隠したら描かない
   const scene = new THREE.Scene();
   const { hemi, sun, rim } = THEME.lights;
   scene.add(new THREE.HemisphereLight(hemi.sky, hemi.ground, hemi.intensity));
@@ -405,8 +407,9 @@ export function createMascot(canvas, { clock = () => performance.now(), environm
   }
   function loop() {
     requestAnimationFrame(loop);
+    if (!enabled) return;
     const { action } = state.current(clock());
-    if (action === 'idle' && !forced && frameNo++ % 2) return;
+    if (action === 'idle' && !forced && frameNo++ % idleEvery) return;
     draw();
   }
   requestAnimationFrame(loop);
@@ -424,6 +427,15 @@ export function createMascot(canvas, { clock = () => performance.now(), environm
     history,
     reset: () => state.reset(clock()),
     get action() { return state.current(clock()).action; },
+    // 出す・隠す（隠している間は描かない。キャンバスの表示は呼ぶ側が CSS で切り替える）
+    get enabled() { return enabled; },
+    set enabled(v) { enabled = !!v; },
+    // 画質: 解像度の上限と、待機中に何フレームに1回描くか
+    setQuality({ maxRatio: m = 2, idleEvery: k = 2 } = {}) {
+      idleEvery = Math.max(1, k);
+      renderer.setPixelRatio(ratioFor(m));
+      resize();
+    },
     // 姿勢を決め打ちする（null で戻す）。スクリーンショット用
     force(action, t = 0) {
       forced = action ? { action, t } : null;

@@ -30,7 +30,7 @@
   <button id="home" type="button" aria-label="向きを戻す" title="向きを戻す">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Zm0 0v0M4 7.5l8 4.5 8-4.5M12 12v9"/></svg>
   </button>
-  <button id="sound" type="button" aria-label="音と振動を切る" aria-pressed="true">
+  <button id="sound" type="button" aria-label="音を切る" aria-pressed="true">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path class="wave" d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/><path class="mute" d="m16 9.5 5 5m0-5-5 5"/></svg>
   </button>
 </nav>
@@ -60,7 +60,22 @@
       <button id="m-normal" type="button">ふつう</button>
       <button id="m-hard" type="button">むずかしい</button>
     </div>
+    <button id="m-settings" class="sub" type="button">⚙ 設定</button>
     <button id="m-close" class="sub" type="button">閉じる</button>
+  </div>
+</div>
+<div id="settings" hidden>
+  <div class="card">
+    <h2>設定</h2>
+    <div class="s-row"><span>音</span><div class="seg" data-key="sound" role="group" aria-label="音"><button type="button" data-v="true">入</button><button type="button" data-v="false">切</button></div></div>
+    <div class="s-row"><span>振動</span><div class="seg" data-key="vibrate" role="group" aria-label="振動"><button type="button" data-v="true">入</button><button type="button" data-v="false">切</button></div></div>
+    <div class="s-row"><span>回す速さ</span><div class="seg" data-key="speed" role="group" aria-label="回す速さ"><button type="button" data-v="slow">ゆっくり</button><button type="button" data-v="normal">ふつう</button><button type="button" data-v="fast">はやい</button></div></div>
+    <div class="s-row"><span>画質</span><div class="seg" data-key="quality" role="group" aria-label="画質"><button type="button" data-v="auto">自動</button><button type="button" data-v="light">軽い</button></div></div>
+    <p class="s-note">動きが重いときは「軽い」に</p>
+    <div class="s-row"><span>ネジまる</span><div class="seg" data-key="mascot" role="group" aria-label="ネジまる"><button type="button" data-v="true">出す</button><button type="button" data-v="false">隠す</button></div></div>
+    <button id="s-clear" type="button">記録を消す</button>
+    <p class="s-note">到達したステージと自己ベストを消します</p>
+    <button id="s-close" class="sub" type="button">もどる</button>
   </div>
 </div>
 <script type="module" src="./src/main.js"></script>

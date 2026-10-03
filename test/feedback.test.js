@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createFeedback, tapCue, eventCue, endCue, VIBRATION, SOUNDS, SETTING_KEY } from '../src/feedback.js';
+import { createFeedback, tapCue, eventCue, endCue, VIBRATION, SOUNDS } from '../src/feedback.js';
+import { createSettings } from '../src/settings.js';
 import { createGame } from '../src/game.js';
 import { BOX_LEVEL } from '../src/levels/box.js';
 
@@ -58,30 +59,49 @@ describe('どの場面で何を鳴らすか', () => {
 });
 
 describe('音と振動の入り切り', () => {
-  it('既定は入り。切ると振動せず、切ったことを端末に保存する', () => {
+  it('既定は両方入り。振動を切ると振動しない（音の設定とは別）', () => {
     const vibrate = vi.fn();
     vi.stubGlobal('navigator', { vibrate });
-    const storage = new Map();
-    const store = { getItem: (k) => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v) };
-    const fb = createFeedback(store);
-    expect(fb.on).toBe(true);
+    const settings = createSettings(memoryStorage());
+    const fb = createFeedback(settings);
+    expect(fb.sound).toBe(true);
+    expect(fb.vibrate).toBe(true);
     fb.cue('unscrew');
     expect(vibrate).toHaveBeenLastCalledWith(VIBRATION.unscrew);
-    fb.on = false;
-    expect(storage.get(SETTING_KEY)).toBe('off');
+    settings.set('vibrate', false);
     fb.cue('cleared');
     expect(vibrate).toHaveBeenCalledTimes(1);
-    // 次に開いたときも切れたまま
-    expect(createFeedback(store).on).toBe(false);
+    // 音だけ切っても振動は続く
+    settings.set('vibrate', true);
+    settings.set('sound', false);
+    fb.cue('box');
+    expect(vibrate).toHaveBeenLastCalledWith(VIBRATION.box);
+    expect(vibrate).toHaveBeenCalledTimes(2);
   });
 
-  it('保存できない端末や、振動できない端末でも例外にならない', () => {
+  it('振動の確かめは振動を切っていると鳴らさない', () => {
+    const vibrate = vi.fn();
+    vi.stubGlobal('navigator', { vibrate });
+    const settings = createSettings(memoryStorage());
+    const fb = createFeedback(settings);
+    fb.sample('vibrate');
+    expect(vibrate).toHaveBeenCalledTimes(1);
+    settings.set('vibrate', false);
+    fb.sample('vibrate');
+    expect(vibrate).toHaveBeenCalledTimes(1);
+  });
+
+  it('設定が無くても、振動できない端末でも例外にならない', () => {
     vi.stubGlobal('navigator', {});
-    const broken = { getItem: () => { throw new Error('x'); }, setItem: () => { throw new Error('x'); } };
-    const fb = createFeedback(broken);
-    expect(fb.on).toBe(true);
+    const fb = createFeedback(null);
+    expect(fb.sound).toBe(true);
     expect(() => fb.cue('box')).not.toThrow();
-    expect(() => { fb.on = false; }).not.toThrow();
-    expect(() => createFeedback(null).cue(null)).not.toThrow();
+    expect(() => fb.cue(null)).not.toThrow();
+    expect(() => fb.sample('sound')).not.toThrow();
   });
 });
+
+function memoryStorage() {
+  const m = new Map();
+  return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) };
+}

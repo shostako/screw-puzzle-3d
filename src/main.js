@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { createGesture } from './gesture.js';
 import { dragRotation, zoomDistance, radPerPx } from './view.js';
-import { buildBoard } from './scene.js';
+import { buildBoard, setKnurl } from './scene.js';
 import { THEME, cssVariables } from './theme.js';
 import { bakeEnvironment } from './env.js';
 import { createMascot } from './mascot.js';
@@ -14,6 +14,7 @@ import { generateLevel, ALL_KINDS } from './generator.js';
 import { BOX_LEVEL } from './levels/box.js';
 import { stageLevel, START_VIEW as START_EULER } from './stages.js';
 import { createProgress, deviceStorage } from './progress.js';
+import { createSettings, clearRecords, SPEEDS, QUALITIES } from './settings.js';
 import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, MAX_RANDOM, isRandomNo, dateKey, isDateKey, dateLabel, dailyBestKey } from './random.js';
 import { rate, clock, createPlayClock, createBests, MAX_STARS } from './rating.js';
 import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
@@ -29,6 +30,9 @@ const freeSeed = Number.parseInt(query.get('seed') ?? '', 10);
 const fixedBox = query.get('level') === 'box';
 const freePlay = fixedBox || Number.isFinite(freeSeed);
 const progress = createProgress(freePlay ? null : deviceStorage());
+// 設定（音・振動・回す速さ・画質・ネジまる）は端末の好みなので、自由な盤面でも保存する
+const settings = createSettings(deviceStorage());
+const quality = () => QUALITIES[settings.get('quality')];
 const bests = createBests(freePlay ? null : deviceStorage());
 const askedStage = Number.parseInt(query.get('stage') ?? '', 10);
 let stage = Number.isInteger(askedStage) && askedStage >= 1 ? askedStage : progress.stage;
@@ -79,10 +83,15 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: DPR < 2, alpha: tr
 renderer.setClearColor(0x000000, 0);
 
 // 描く解像度。DPR は 2 まで。動かしている間の1フレームが重ければ段階的に下げる（中級機で滑らかに動かすため）。
-// 下げた解像度はその回のあいだ保つ（上げ下げを繰り返すと画面がちらつく）
-const PIXEL_RATIOS = [2, 1.5, 1.25, 1].filter((r) => r <= Math.max(1, DPR));
+// 下げた解像度はその回のあいだ保つ（上げ下げを繰り返すと画面がちらつく）。設定の画質「軽い」なら初めから 1
+let PIXEL_RATIOS = [];
 let pixelLevel = 0;
-renderer.setPixelRatio(PIXEL_RATIOS[0]);
+function usePixelRatios() {
+  PIXEL_RATIOS = quality().pixelRatios.filter((r) => r <= Math.max(1, DPR));
+  pixelLevel = 0;
+  renderer.setPixelRatio(PIXEL_RATIOS[0]);
+}
+usePixelRatios();
 const SLOW_FRAME_MS = 24;   // 続けて描いたフレームの間隔の平均がこれを超えたら下げる（40fps を切る）
 const frameTimes = [];
 function watchFrameTime(now, last) {
@@ -181,7 +190,7 @@ const axis = new THREE.Vector3();
 const turn = new THREE.Quaternion();
 function rotateBy(dx, dy) {
   homing = null;
-  const { axis: a, angle } = dragRotation(dx, dy, radPerPx(window.innerWidth, window.innerHeight));
+  const { axis: a, angle } = dragRotation(dx, dy, radPerPx(window.innerWidth, window.innerHeight) * SPEEDS[settings.get('speed')].k);
   if (angle === 0) return;
   // カメラから見た軸で回す（いまの向きに関係なく、指の方向へ回る）
   turn.setFromAxisAngle(axis.set(a[0], a[1], a[2]), angle);
@@ -806,7 +815,7 @@ function rebuildBoard() {
     model.remove(board.root);
     for (const p of board.plates.values()) if (p.parent === scene) scene.remove(p);
   }
-  board = buildBoard(LEVEL);
+  board = buildBoard(LEVEL, { knurl: quality().knurl });
   model.add(board.root);
   stepClock = 0;
 }
@@ -1006,12 +1015,14 @@ $('restart').addEventListener('click', restart);
 $('hint-btn').addEventListener('click', showHint);
 $('home').addEventListener('click', goHome);
 
-// 音と振動の入り切り（端末に保存する）
-const feedback = createFeedback(deviceStorage());
+// 音と振動（入り切りは設定が持つ）
+const feedback = createFeedback(settings);
 
 // マスコット「ネジまる」（D3）。左下の小さなキャンバスに別の描き手で描き、演出の時計で動く。
 // 合図（cue）を音と振動と同じ名前で受けて、成功・失敗・箱が満杯・外せないねじに反応する（音を切っていても動く）
-const mascot = createMascot($('mascot'), { clock: fxClock, environment: bakeEnvironment });
+const mascot = createMascot($('mascot'), {
+  clock: fxClock, environment: bakeEnvironment, maxRatio: quality().mascotRatio, idleEvery: quality().idleEvery,
+});
 function cue(name) {
   feedback.cue(name);
   if (name) mascot.react(name);
@@ -1022,22 +1033,91 @@ function seatMascot(onCard) {
   if (onCard) $('overlay').querySelector('.card').prepend(c);
   else document.body.insertBefore(c, $('flyers'));
 }
+// 右下の音のボタン: 音だけを入り切りする（振動は設定の画面で）
 const soundButton = $('sound');
 function showSound() {
-  soundButton.classList.toggle('off', !feedback.on);
-  soundButton.setAttribute('aria-pressed', String(feedback.on));
-  soundButton.setAttribute('aria-label', feedback.on ? '音と振動を切る' : '音と振動を入れる');
+  const on = settings.get('sound');
+  soundButton.classList.toggle('off', !on);
+  soundButton.setAttribute('aria-pressed', String(on));
+  soundButton.setAttribute('aria-label', on ? '音を切る' : '音を入れる');
 }
 soundButton.addEventListener('click', () => {
-  feedback.on = !feedback.on;
-  showSound();
-  feedback.cue('box');   // 切り替えの確かめの音（マスコットは動かさない）
+  settings.set('sound', !settings.get('sound'));   // 入れたら確かめの音を鳴らす（applySetting。マスコットは動かさない）
 });
 showSound();
+
+// ---- 設定の画面（遊び方の画面の「設定」から） ----
+// 並んだボタン（.seg）の data-key が設定の名前、各ボタンの data-v が値（'true' / 'false' は真偽値）
+const settingsEl = $('settings');
+const segValue = (b) => (b.dataset.v === 'true' ? true : b.dataset.v === 'false' ? false : b.dataset.v);
+function showSettings() {
+  for (const seg of settingsEl.querySelectorAll('.seg')) {
+    for (const b of seg.querySelectorAll('button')) b.setAttribute('aria-pressed', String(segValue(b) === settings.get(seg.dataset.key)));
+  }
+}
+for (const seg of settingsEl.querySelectorAll('.seg')) {
+  seg.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (b) settings.set(seg.dataset.key, segValue(b));
+  });
+}
+// 設定が変わったら、すぐ画面に効かせる
+function applySetting(name, value) {
+  if (name === 'sound') {
+    showSound();
+    feedback.sample('sound');
+  } else if (name === 'vibrate') {
+    feedback.sample('vibrate');
+  } else if (name === 'quality') {
+    usePixelRatios();
+    resize();
+    if (board) setKnurl(board, quality().knurl);
+    mascot.setQuality({ maxRatio: quality().mascotRatio, idleEvery: quality().idleEvery });
+    requestRender();
+  } else if (name === 'mascot') {
+    mascot.enabled = value;
+    document.body.classList.toggle('no-mascot', !value);
+  }
+  showSettings();
+}
+settings.onChange(applySetting);
+applySetting('mascot', settings.get('mascot'));
+
+function openSettings() {
+  disarmClear();
+  showSettings();
+  $('menu').hidden = true;
+  settingsEl.hidden = false;
+}
+function closeSettings() {
+  settingsEl.hidden = true;
+  openMenu();
+}
+// 記録を消す: 1回目の押しで確かめの文字に変え、4 秒以内にもう一度押したら消して最初から開き直す
+let clearArmed = null;
+function disarmClear() {
+  clearTimeout(clearArmed);
+  clearArmed = null;
+  $('s-clear').classList.remove('armed');
+  $('s-clear').textContent = '記録を消す';
+}
+$('s-clear').addEventListener('click', () => {
+  if (!clearArmed) {
+    $('s-clear').classList.add('armed');
+    $('s-clear').textContent = 'もう一度押すと消えます';
+    clearArmed = setTimeout(disarmClear, 4000);
+    return;
+  }
+  disarmClear();
+  clearRecords(deviceStorage());
+  window.location.replace(window.location.pathname);
+});
+$('s-close').addEventListener('click', closeSettings);
 $('again').addEventListener('click', restart);
 $('next').addEventListener('click', nextStage);
 $('mode-btn').addEventListener('click', openMenu);
 $('m-close').addEventListener('click', closeMenu);
+$('m-settings').addEventListener('click', openSettings);
 $('m-stage').addEventListener('click', () => pickMode({ type: 'stage' }));
 $('m-daily').addEventListener('click', () => pickMode({ type: 'daily', key: today() }));
 for (const d of DIFFICULTY_IDS) $(`m-${d}`).addEventListener('click', () => pickMode({ type: 'random', no: freshRandomNo(), difficulty: d }));
@@ -1118,6 +1198,10 @@ window.__app = {
   get stage() { return mode.type === 'stage' ? stage : null; },
   get mode() { return { ...mode }; },
   openMenu,
+  openSettings,
+  settings: { get: (k) => settings.get(k), all: () => settings.all() },
+  get pixelRatio() { return renderer.getPixelRatio(); },
+  get mascotDrawing() { return mascot.enabled; },
   loadMode,
   get rendered() { return !loading && !needsRender && !tweens.size && !playing && !physics?.moving(); },
   // rendered が false の理由（スクリーンショットのスクリプトが待ちきれなかったとき用）

@@ -14,7 +14,7 @@
 //   stuck    詰み
 //   undo     戻した（1手戻す・解ける所まで戻る）
 
-export const SETTING_KEY = 'screw-puzzle-3d.sound';
+// 音と振動の入り切りは設定（settings.js の sound / vibrate）が持つ。ここは毎回それを読んで鳴らすだけ
 
 // タップの結果（game.tap の reason）の合図
 export function tapCue(reason) {
@@ -69,20 +69,16 @@ export const SOUNDS = {
   stuck: [{ at: 0, f: 330, to: 300, d: 0.22, wave: 'sine', gain: 0.16 }, { at: 0.22, f: 262, to: 220, d: 0.4, wave: 'sine', gain: 0.16 }],
 };
 
-// 音と振動を鳴らすもの。storage は設定の保存先（localStorage と同じ形、null なら保存しない）。
+// 音と振動を鳴らすもの。settings は設定（get('sound') / get('vibrate') を持つもの。null なら両方入り）。
 // 音は最初のタッチで AudioContext を作る（ブラウザは利用者の操作の前に音を出させない）
-export function createFeedback(storage) {
-  let on = true;
-  try {
-    on = storage?.getItem(SETTING_KEY) !== 'off';
-  } catch {
-    // 読めなければ鳴らす
-  }
+export function createFeedback(settings) {
+  const soundOn = () => settings?.get('sound') ?? true;
+  const vibrateOn = () => settings?.get('vibrate') ?? true;
   let ctx = null;
   let noise = null;
 
   function unlock() {
-    if (!on) return;
+    if (!soundOn()) return;
     const AC = globalThis.AudioContext ?? globalThis.webkitAudioContext;
     if (!AC) return;
     try {
@@ -135,27 +131,31 @@ export function createFeedback(storage) {
     }
   }
 
+  function vibrate(name) {
+    try {
+      globalThis.navigator?.vibrate?.(VIBRATION[name] ?? 0);
+    } catch {
+      // 振動できない端末では何もしない
+    }
+  }
+
   return {
-    get on() { return on; },
-    set on(v) {
-      on = !!v;
-      try {
-        storage?.setItem(SETTING_KEY, on ? 'on' : 'off');
-      } catch {
-        // 保存できなくても、この回は切り替える
-      }
-      if (on) unlock();
-    },
+    get sound() { return soundOn(); },
+    get vibrate() { return vibrateOn(); },
     unlock,
-    // 合図を鳴らす（null なら何もしない）
+    // 合図を鳴らす（null なら何もしない）。音と振動はそれぞれの設定に従う
     cue(name) {
-      if (!on || !name) return;
-      sound(name);
-      try {
-        globalThis.navigator?.vibrate?.(VIBRATION[name] ?? 0);
-      } catch {
-        // 振動できない端末では何もしない
+      if (!name) return;
+      if (soundOn()) sound(name);
+      if (vibrateOn()) vibrate(name);
+    },
+    // 設定を入れたときの確かめ（音だけ・振動だけを鳴らす）
+    sample(kind, name = 'box') {
+      if (kind === 'sound' && soundOn()) {
+        unlock();
+        sound(name);
       }
+      if (kind === 'vibrate' && vibrateOn()) vibrate(name);
     },
   };
 }

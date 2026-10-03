@@ -62,6 +62,12 @@
 //   daily.png / daily-cleared.png  今日の1問を開いた直後と、クリアした画面
 //   daily-menu-done.png  ステージへ戻ってから遊び方の画面を開いたところ（今日の1問がクリア済みと星）
 //   あわせて、?random=番号&diff= で同じ番号の盤面が開くこと、おまかせ・今日の1問のクリアでステージの到達が進まないことを確かめる
+//   （設定。保存の無い新しい端末として開き、題名 → 遊び方の画面の「設定」を指でタップして）
+//   settings.png        設定の画面（既定: 音・振動 入、回す速さ ふつう、画質 自動、ネジまる 出す）
+//   settings-light.png  画質「軽い」・ネジまる「隠す」にして閉じた盤面（ねじの頭にローレットが無い、左下にネジまるが居ない）
+//   settings-clear.png  「記録を消す」を1回押して、確かめの文字に変わったところ
+//   あわせて、回す速さ「はやい」で同じ指の動きが ふつう の約 1.4 倍回ること、画質「軽い」で描く解像度が 1 になること、
+//   設定が再読み込みの後も残ること、記録を消すとステージ 1 に戻り設定は残ることを確かめる
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -71,7 +77,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -522,14 +528,14 @@ async function sizeShots(browser, errors, outside) {
     if (card.x < 0 || card.x + card.width > viewport.width) throw new Error(`${name}: クリアの札が画面からはみ出す`);
 
     if (name === 'normal') {
-      // 音と振動を切ると、再読み込みしても切れたまま
+      // 右下のボタンで音を切ると、再読み込みしても切れたまま
       const sb = await page.locator('#sound').boundingBox();
       await page.locator('#again').click();
       await tap(cdp, [sb.x + sb.width / 2, sb.y + sb.height / 2]);
       await page.reload();
       await waitRendered(page);
       const pressed = await page.locator('#sound').getAttribute('aria-pressed');
-      if (pressed !== 'false') throw new Error(`音と振動の切り替えが残らない: ${pressed}`);
+      if (pressed !== 'false') throw new Error(`音の切り替えが残らない: ${pressed}`);
     }
     await context.close();
   }
@@ -920,6 +926,96 @@ async function randomShots(context, errors, outside) {
 
 // 戻る。生成した箱を手順どおりに途中まで外し、右下の「1手戻す」で2手戻して外し直すと同じ局面になること、
 // わざと待機スロットへ入れて詰ませ、詰みの画面の「1手戻す」と「解ける所まで戻る」が効くことを確かめる
+// 設定。題名から遊び方の画面を開き、「設定」で設定の画面へ
+async function settingsShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const save = async (name) => {
+    const path = join(outDir, `${name}.png`);
+    await page.screenshot({ path });
+    console.log(`screenshot: ${path}`);
+  };
+  const tapButton = async (sel) => {
+    const box = await page.locator(sel).boundingBox();
+    if (!box) throw new Error(`${sel} が見えない`);
+    await tap(cdp, [box.x + box.width / 2, box.y + box.height / 2]);
+    await page.waitForTimeout(300);
+  };
+  const pick = (key, v) => tapButton(`#settings .seg[data-key="${key}"] button[data-v="${v}"]`);
+  const openSettings = async () => {
+    await tapButton('#mode-btn');
+    await page.waitForSelector('#menu:not([hidden])');
+    await tapButton('#m-settings');
+    await page.waitForSelector('#settings:not([hidden])');
+  };
+  const closeAll = async () => {
+    await tapButton('#s-close');
+    await page.waitForSelector('#menu:not([hidden])');
+    await tapButton('#m-close');
+    await page.waitForSelector('#menu', { state: 'hidden' });
+  };
+  // 盤面の真ん中を右へ 120px なぞって、回った角度（ラジアン）
+  const turnAngle = async () => {
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+    const q0 = await page.evaluate(() => window.__app.model.quaternion.toArray());
+    const c = [VIEWPORT.width / 2, VIEWPORT.height / 2];
+    await drag(cdp, c, [c[0] + 120, c[1]]);
+    await page.waitForTimeout(300);
+    const q1 = await page.evaluate(() => window.__app.model.quaternion.toArray());
+    const dot = Math.abs(q0.reduce((t, v, i) => t + v * q1[i], 0));
+    return 2 * Math.acos(Math.min(1, dot));
+  };
+
+  await page.goto(url);
+  await waitRendered(page);
+  const normalTurn = await turnAngle();
+  await openSettings();
+  const shown = await page.evaluate(() => window.__app.settings.all());
+  if (JSON.stringify(shown) !== JSON.stringify({ sound: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true })) throw new Error(`設定の既定が違う: ${JSON.stringify(shown)}`);
+  const card = await page.locator('#settings .card').boundingBox();
+  if (card.x < 0 || card.x + card.width > VIEWPORT.width || card.y < 0 || card.y + card.height > VIEWPORT.height) throw new Error('設定の画面がはみ出す');
+  await save('settings');
+
+  await pick('speed', 'fast');
+  await pick('quality', 'light');
+  await pick('mascot', 'false');
+  await pick('vibrate', 'false');
+  if (await page.evaluate(() => window.__app.pixelRatio) !== 1) throw new Error('画質「軽い」で解像度が 1 にならない');
+  await closeAll();
+  const fastTurn = await turnAngle();
+  const ratio = fastTurn / normalTurn;
+  if (Math.abs(ratio - 1.4) > 0.15) throw new Error(`回す速さ「はやい」の回り方が合わない: ${normalTurn.toFixed(3)} → ${fastTurn.toFixed(3)}`);
+  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+  await waitRendered(page);
+  if (await page.locator('#mascot').isVisible()) throw new Error('ネジまるを隠しても見えている');
+  await save('settings-light');
+
+  // 再読み込みしても残る
+  await page.reload();
+  await waitRendered(page);
+  const kept = await page.evaluate(() => window.__app.settings.all());
+  if (JSON.stringify(kept) !== JSON.stringify({ sound: true, vibrate: false, speed: 'fast', quality: 'light', mascot: false })) throw new Error(`設定が再読み込みで残らない: ${JSON.stringify(kept)}`);
+  if (await page.locator('#mascot').isVisible() || await page.evaluate(() => window.__app.mascotDrawing)) throw new Error('再読み込みでネジまるが戻った');
+
+  // 記録を消す: ステージ 3 まで進んだ端末で、2 回押すとステージ 1 に戻る。設定は残る
+  await page.evaluate(() => localStorage.setItem('screw-puzzle-3d.stage', '3'));
+  await page.goto(url);
+  await waitRendered(page);
+  if (await page.evaluate(() => window.__app.stage) !== 3) throw new Error('ステージ 3 から始まらない');
+  await openSettings();
+  await tapButton('#s-clear');
+  if (await page.locator('#s-clear').textContent() !== 'もう一度押すと消えます') throw new Error('記録を消すの確かめが出ない');
+  await save('settings-clear');
+  await Promise.all([page.waitForNavigation(), tapButton('#s-clear')]);
+  await waitRendered(page);
+  if (await page.evaluate(() => window.__app.stage) !== 1) throw new Error('記録を消してもステージ 1 に戻らない');
+  if (await page.evaluate(() => window.__app.settings.get('speed')) !== 'fast') throw new Error('記録を消したら設定まで消えた');
+  await context.close();
+}
+
 async function undoShots(context, errors, outside) {
   const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -1076,6 +1172,7 @@ try {
   if (only('undo')) await undoShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('rating')) await ratingShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('random')) await randomShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('settings')) await settingsShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);
   if (errors.length) throw new Error(`ページでエラー: ${errors.join(' / ')}`);
