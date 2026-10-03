@@ -41,6 +41,8 @@ const askedByUrl = ['stage', 'random', 'daily'].some((k) => query.has(k));
 let pending = freePlay || askedByUrl ? null : resumeStore.load();
 if (pending?.mode.type === 'random' && !DIFFICULTIES[pending.mode.difficulty]) pending = null;
 if (pending?.mode.type === 'daily' && !isDateKey(pending.mode.key)) pending = null;
+// ステージをまだ1本も外していなければ、続きではなく到達したステージから（おまかせ・今日の1問は外す前でも遊び方を続ける）
+if (pending?.mode.type === 'stage' && !pending.path.length) pending = null;
 const askedStage = Number.parseInt(query.get('stage') ?? '', 10);
 let stage = Number.isInteger(askedStage) && askedStage >= 1 ? askedStage
   : pending?.mode.type === 'stage' ? pending.stage : progress.stage;
@@ -1117,7 +1119,9 @@ const feedback = createFeedback(settings);
 // 板の大きさ（面の面積の平方根）。落ちる音の音程に使う
 function plateSize(id) {
   const p = LEVEL.plates.find((q) => q.id === id);
-  return p ? Math.sqrt(p.size[0] * p.size[1]) : undefined;
+  if (!p) return undefined;
+  // 円柱（D4 の車輪など）は size を持たないので、円の面積から
+  return p.shape === 'cylinder' ? Math.sqrt(Math.PI) * p.radius : Math.sqrt(p.size[0] * p.size[1]);
 }
 
 // マスコット「ネジまる」（D3）。左下の小さなキャンバスに別の描き手で描き、演出の時計で動く。

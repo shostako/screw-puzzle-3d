@@ -1214,15 +1214,19 @@ async function resumeShots(context, errors, outside) {
   if (JSON.stringify((await look()).where) !== JSON.stringify(undone.where)) throw new Error('戻した後の局面が保存されていない');
 
   // 盤面の作りが変わった版の後（指紋が合わない）は、黙ってその盤面の最初から。
-  // 閉じる時（pagehide）にも保存するので、ゲームの外の同じ所のページ（404）へ移ってから書き換える
-  await page.goto(url + 'no-such-page');
-  await page.evaluate(() => {
+  // 閉じる時（pagehide）にも保存するので、保存しない固定の箱（?level=box）のページを別に開いて、ゲームのページを閉じてから書き換える
+  const other = await context.newPage();
+  other.on('pageerror', (e) => errors.push(String(e)));
+  await other.goto(url + '?level=box');
+  await waitRendered(other);
+  await page.close();
+  await other.evaluate(() => {
     const r = JSON.parse(localStorage.getItem('screw-puzzle-3d.resume'));
     localStorage.setItem('screw-puzzle-3d.resume', JSON.stringify({ ...r, sig: '00000000' }));
   });
-  await page.goto(url);
-  await waitRendered(page);
-  const fresh = await page.evaluate(() => [window.__app.mode.type, window.__app.resumed, window.__app.moves].join());
+  await other.goto(url);
+  await waitRendered(other);
+  const fresh = await other.evaluate(() => [window.__app.mode.type, window.__app.resumed, window.__app.moves].join());
   if (fresh !== 'daily,,0') throw new Error(`合わない保存で最初から始まらない: ${fresh}`);
   await context.close();
 }
