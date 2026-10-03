@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createGesture } from './gesture.js';
-import { dragRotation, zoomDistance } from './view.js';
+import { dragRotation, zoomDistance, radPerPx } from './view.js';
 import { buildBoard } from './scene.js';
 import { createGame, hudOf, applyEvent } from './game.js';
 import { nearestScrew } from './pick.js';
@@ -10,6 +10,7 @@ import { generateLevel, KINDS } from './generator.js';
 import { BOX_LEVEL } from './levels/box.js';
 import { stageLevel, START_VIEW as START_EULER } from './stages.js';
 import { createProgress, deviceStorage } from './progress.js';
+import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
 
 // 既定はステージの進行（到達したステージから始める）。
 // ?seed=番号（と &kind=box|shelf|table）なら生成した盤面を1つだけ遊ぶ（進行は保存しない）。
@@ -39,9 +40,30 @@ const hint = $('hint');
 
 // ---- 3D ----
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+// 画素の細かい画面（devicePixelRatio 2 以上。今のスマホのほとんど）では、縁のギザギザが目立たないので
+// アンチエイリアス（MSAA）を切って、塗る量を減らす
+const DPR = window.devicePixelRatio || 1;
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: DPR < 2, powerPreference: 'high-performance' });
 renderer.setClearColor(0xf4ead9);
+
+// 描く解像度。DPR は 2 まで。動かしている間の1フレームが重ければ段階的に下げる（中級機で滑らかに動かすため）。
+// 下げた解像度はその回のあいだ保つ（上げ下げを繰り返すと画面がちらつく）
+const PIXEL_RATIOS = [2, 1.5, 1.25, 1].filter((r) => r <= Math.max(1, DPR));
+let pixelLevel = 0;
+renderer.setPixelRatio(PIXEL_RATIOS[0]);
+const SLOW_FRAME_MS = 24;   // 続けて描いたフレームの間隔の平均がこれを超えたら下げる（40fps を切る）
+const frameTimes = [];
+function watchFrameTime(now, last) {
+  if (!last || now - last > 100) { frameTimes.length = 0; return; }   // 止まっていた後の1フレームは数えない
+  frameTimes.push(now - last);
+  if (frameTimes.length < 40) return;
+  const avg = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+  frameTimes.length = 0;
+  if (avg > SLOW_FRAME_MS && pixelLevel < PIXEL_RATIOS.length - 1) {
+    renderer.setPixelRatio(PIXEL_RATIOS[++pixelLevel]);
+    resize();
+  }
+}
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
@@ -66,9 +88,18 @@ scene.add(model);
 let board = null;
 let physics = null;   // 板の物理（盤面の座標で動く。やり直しで作り直す）
 
+// 描き直しは、何かが変わったときだけ次のフレームで行う。何も動いていなければフレームの呼び出しも止めて、電池を使わない
 let needsRender = true;
+let framePending = false;
+let started = false;   // 物理の準備ができるまではフレームを回さない
 function requestRender() {
   needsRender = true;
+  wake();
+}
+function wake() {
+  if (framePending || !started) return;
+  framePending = true;
+  requestAnimationFrame(frame);
 }
 
 // HUD の高さの分、立体を画面の下寄りに描く
@@ -90,7 +121,8 @@ window.addEventListener('resize', resize);
 const axis = new THREE.Vector3();
 const turn = new THREE.Quaternion();
 function rotateBy(dx, dy) {
-  const { axis: a, angle } = dragRotation(dx, dy);
+  homing = null;
+  const { axis: a, angle } = dragRotation(dx, dy, radPerPx(window.innerWidth, window.innerHeight));
   if (angle === 0) return;
   // カメラから見た軸で回す（いまの向きに関係なく、指の方向へ回る）
   turn.setFromAxisAngle(axis.set(a[0], a[1], a[2]), angle);
@@ -104,11 +136,27 @@ function zoomBy(scale) {
   requestRender();
 }
 
+// 向きと距離を最初に戻す（見失ったとき用のボタン）。0.35 秒かけて回して戻す
+let homing = null;
+function goHome() {
+  const from = model.quaternion.clone(), to = new THREE.Quaternion().setFromEuler(START_VIEW);
+  const d0 = distance;
+  const t = tween(350, (k) => {
+    if (homing !== t) return;
+    const e = k * k * (3 - 2 * k);
+    model.quaternion.slerpQuaternions(from, to, e);
+    distance = d0 + (START_DISTANCE - d0) * e;
+    camera.position.set(0, 0, distance);
+  });
+  homing = t;
+}
+
 // ---- 時間で動くもの（ねじが抜ける、震える、板が落ちる） ----
 
 const tweens = new Set();
 function tween(duration, update, done) {
   const t = { start: performance.now(), duration, update, done };
+  wake();
   tweens.add(t);
   requestRender();
   return t;
@@ -160,6 +208,10 @@ function dropPlate(obj) {
   const y0 = obj.position.y;
   const mats = [];
   obj.traverse((o) => o.material && mats.push(o.material));
+  for (const m of mats) {
+    m.transparent = true;   // 板はふだん不透明で描いている（scene.js）。消えるときだけ透明にする
+    m.needsUpdate = true;
+  }
   tween(900, (k) => {
     obj.position.y = y0 - 26 * k * k;
     for (const m of mats) m.opacity = (m.userData.opacity0 ??= m.opacity) * Math.min(1, 2.2 - 2.2 * k);
@@ -280,6 +332,7 @@ async function play() {
         await wait(220 * fast);
       }
       if (gen !== generation) break;
+      if (ev.type !== 'plate') feedback.cue(eventCue(ev));   // 板の落ちる音はタップの瞬間に鳴らしている
       hud = after;
       renderHud(hud, ev.type === 'boxSpawn' ? ev.box : -1);
       if (ev.type === 'boxSpawn') await wait(200 * fast);
@@ -292,9 +345,9 @@ async function play() {
 function tapScrew(id) {
   const obj = board.screws.get(id);
   const r = game.tap(id);
+  feedback.cue(tapCue(r.reason));
   if (r.reason === 'blocked') {
     shake(obj);
-    navigator.vibrate?.(30);
     const by = movableBlockers(id);
     say(by === 'loose' ? '落ちた板に隠れている。回して払い落とそう'
       : by === 'hanging' ? 'ぶら下がった板に隠れている。回して動かそう'
@@ -308,6 +361,7 @@ function tapScrew(id) {
     const from = screenOf(obj);
     unscrew(obj);
     syncPlates(physics, game.state);   // 1本になった板はぶら下がり、0本の板は落ち始める
+    if (r.events.some((ev) => eventCue(ev) === 'plate')) feedback.cue('plate');
     requestRender();
     queue.push({ events: r.events, from, status: r.status });
     play();
@@ -329,6 +383,7 @@ function showEnd(status) {
   const ov = $('overlay');
   ov.className = status;
   const cleared = status === 'cleared';
+  feedback.cue(endCue(status));
   // クリアしたらその場で次のステージを保存する（ボタンを押す前に閉じても、次は続きから）
   if (cleared && !freePlay) progress.cleared(stage);
   $('end-title').textContent = cleared ? (freePlay ? 'クリア！' : `ステージ ${stage} クリア！`) : '詰み';
@@ -356,6 +411,7 @@ async function nextStage() {
   await wait(30);
   LEVEL = levelFor();
   newGameFor(LEVEL);
+  homing = null;
   model.quaternion.setFromEuler(START_VIEW);
   zoomBy(distance / START_DISTANCE);
   restart();
@@ -446,6 +502,7 @@ function handle(events) {
 }
 
 canvas.addEventListener('pointerdown', (e) => {
+  feedback.unlock();   // 音は利用者の操作の中でしか鳴らし始められない
   canvas.setPointerCapture(e.pointerId);
   handle(gesture.down(e.pointerId, e.clientX, e.clientY, e.timeStamp));
 });
@@ -465,6 +522,22 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 $('restart').addEventListener('click', restart);
+$('home').addEventListener('click', goHome);
+
+// 音と振動の入り切り（端末に保存する）
+const feedback = createFeedback(deviceStorage());
+const soundButton = $('sound');
+function showSound() {
+  soundButton.classList.toggle('off', !feedback.on);
+  soundButton.setAttribute('aria-pressed', String(feedback.on));
+  soundButton.setAttribute('aria-label', feedback.on ? '音と振動を切る' : '音と振動を入れる');
+}
+soundButton.addEventListener('click', () => {
+  feedback.on = !feedback.on;
+  showSound();
+  feedback.cue('box');
+});
+showSound();
 $('again').addEventListener('click', restart);
 $('next').addEventListener('click', nextStage);
 
@@ -500,7 +573,9 @@ function stepPhysics(now) {
   requestRender();
 }
 
+let lastDraw = 0;
 function frame(now) {
+  framePending = false;
   stepPhysics(now);
   if (tweens.size) {
     runTweens(now);
@@ -509,15 +584,20 @@ function frame(now) {
   if (needsRender) {
     needsRender = false;
     renderer.render(scene, camera);
+    watchFrameTime(now, lastDraw);
+    lastDraw = now;
   }
-  requestAnimationFrame(frame);
+  // 物理が動いているか演出の途中なら次のフレームも。止まっていればここで止め、次の操作（requestRender）で再開する
+  if (physics.moving() || tweens.size || needsRender) wake();
+  else lastFrame = 0;
 }
 
 async function start() {
   await initPhysics();
+  started = true;
   restart();
   resize();
-  requestAnimationFrame(frame);
+  wake();
 }
 start();
 
@@ -525,6 +605,7 @@ start();
 window.__app = {
   model,
   camera,
+  startQuaternion: new THREE.Quaternion().setFromEuler(START_VIEW).toArray(),
   get game() { return game; },
   get stage() { return freePlay ? null : stage; },
   get rendered() { return !loading && !needsRender && !tweens.size && !playing && !physics?.moving(); },

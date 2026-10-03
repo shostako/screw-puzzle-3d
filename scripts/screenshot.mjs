@@ -20,6 +20,12 @@
 //   stage2.png / stage3.png  「次のステージへ」を指でタップして進んだ直後
 //   stage4-resumed.png  ステージ 3 までクリアしてから再読み込みした直後（続きのステージ 4 から始まる）
 //   stage5.png / stage6.png / stage20.png  先のステージ（?stage=番号）を開いた直後
+//   （画面の大きさ、M8。小さめ 360×640・普通 390×844・大きめ 430×932 の縦画面）
+//   size-<名前>.png         ステージ 7 を開いた直後
+//   size-<名前>-midway.png  生成した箱（シード 4）を手順どおりに 8 本外し、箱とスロットが埋まりかけたところ
+//   size-<名前>-cleared.png 同じ盤面をクリアした画面
+//   あわせて、ねじの中心から少し外れた所のタップで外れること、「向きを戻す」で最初の向きに戻ること、
+//   音と振動の切り替えが再読み込みの後も残ることを確かめる
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -29,13 +35,13 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,stage で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行
+// SHOTS=box,gen,stage,size で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
 const VIEWPORT = { width: 390, height: 844 };
 
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.wasm': 'application/wasm' };
 
 function serve() {
   const server = createServer(async (req, res) => {
@@ -65,17 +71,16 @@ function findChromium() {
   return undefined;
 }
 
-// 物理の板が落ち着かないまま、この時間を過ぎたら先へ進む（ほかの理由で待ちきれないときは失敗にする）。
-// 解いた後の札がぶら下がったまま、その上に落ちた板と触れ合い続けて止まらないことがある（M8 で直す。ROADMAP の M7）
-const SETTLE_MS = 15000;
+// 描画と物理が落ち着くまで待つ。M7 までは、板が触れ合ったまま止まらないときに警告だけ出して先へ進めていたが、
+// M8 で物理が必ず落ち着くようにしたので、待ちきれなければ失敗にする。
+// （物理の歯止めは 1200 刻み。ヘッドレスの遅い描画では1フレームに 4 刻みしか進めないので、余裕をみて長めに待つ）
+const SETTLE_MS = 40000;
 async function waitRendered(page) {
   try {
     await page.waitForFunction(() => window.__app?.rendered, null, { timeout: SETTLE_MS });
   } catch (e) {
     const why = await page.evaluate(() => window.__app?.why?.()).catch(() => null);
-    const onlyMoving = why && why.moving && !why.loading && !why.tweens && !why.playing;
-    if (!onlyMoving) throw new Error(`描画が落ち着かない: ${JSON.stringify(why)}`, { cause: e });
-    console.warn(`warning: 板が落ち着かないまま進む: ${JSON.stringify(why.modes)}`);
+    throw new Error(`描画が落ち着かない: ${JSON.stringify(why)}`, { cause: e });
   }
   // 描いた後の1フレームを待ってから撮る
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -287,6 +292,120 @@ async function stageShots(context, errors, outside) {
   await context.close();
 }
 
+// 画面の大きさ（M8）。代表的なスマホの縦画面
+const SIZES = [['small', { width: 360, height: 640 }], ['normal', { width: 390, height: 844 }], ['large', { width: 430, height: 932 }]];
+
+async function sizeShots(browser, errors, outside) {
+  for (const [name, viewport] of SIZES) {
+    const context = await browser.newContext({ viewport, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    const page = await context.newPage();
+    page.on('pageerror', (e) => errors.push(String(e)));
+    page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+    page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+    const cdp = await context.newCDPSession(page);
+    const shoot = async (file) => {
+      await waitRendered(page);
+      const path = join(outDir, `${file}.png`);
+      await page.screenshot({ path });
+      console.log(`screenshot: ${path}`);
+    };
+    // HUD・右下のボタン・立体が画面からはみ出していないか
+    const checkLayout = async () => {
+      const bad = await page.evaluate(() => {
+        const out = [];
+        const w = window.innerWidth, h = window.innerHeight;
+        for (const sel of ['#bar', '#boxes .box', '#slots', '#hint', '#tools button', '#restart']) {
+          for (const el of document.querySelectorAll(sel)) {
+            const r = el.getBoundingClientRect();
+            if (r.left < 0 || r.top < 0 || r.right > w + 0.5 || r.bottom > h + 0.5) out.push(`${sel} が画面の外 ${JSON.stringify(r)}`);
+          }
+        }
+        // 盤面のねじが全部、HUD より下・右下のボタンに重ならない所に見えている（最初の向き）
+        const hud = document.getElementById('hud').getBoundingClientRect().bottom;
+        for (const s of window.__app.level ? window.__app.visibleScrews() : []) {
+          if (s.x < 0 || s.x > w || s.y < hud - 10 || s.y > h) out.push(`ねじ ${s.id} が画面の外か HUD の下 (${s.x | 0}, ${s.y | 0})`);
+        }
+        return out;
+      });
+      if (bad.length) throw new Error(`${name}: レイアウトが崩れている: ${bad.join(' / ')}`);
+    };
+
+    await page.goto(url + '?stage=7');
+    await waitRendered(page);
+    await checkLayout();
+    await shoot(`size-${name}`);
+
+    // 指の腹の幅: ねじ頭の中心から 26px（M7 までの判定の半径 24 の外）ずれた所をタップしても、そのねじが外れる。
+    // 周りのねじから 60px 以上離れたねじを選び、一番近いねじと反対の向きにずらす（ずらした先でも、ほかのねじより近い）
+    const target = await page.evaluate(() => {
+      const seen = window.__app.visibleScrews();
+      const legal = new Set(window.__app.legal());
+      for (const s of seen) {
+        if (!legal.has(s.id)) continue;
+        const others = seen.filter((o) => o.id !== s.id).sort((a, b) => Math.hypot(a.x - s.x, a.y - s.y) - Math.hypot(b.x - s.x, b.y - s.y));
+        const n = others[0];
+        const d = n ? Math.hypot(n.x - s.x, n.y - s.y) : Infinity;
+        if (d < 60) continue;
+        const [ux, uy] = n ? [(s.x - n.x) / d, (s.y - n.y) / d] : [1, 0];
+        return { id: s.id, x: s.x + 26 * ux, y: s.y + 26 * uy };
+      }
+      return null;
+    });
+    if (!target) throw new Error(`${name}: 周りの空いた外せるねじが無い`);
+    await tap(cdp, [target.x, target.y]);
+    await waitRendered(page);
+    if (await page.evaluate((id) => window.__app.game.state.where[id], target.id) === 'board') {
+      throw new Error(`${name}: 中心から 26px ずれたタップでねじ ${target.id} が外れなかった`);
+    }
+
+    // 回してから「向きを戻す」をタップすると、最初の向きに戻る
+    const mid = [viewport.width / 2, viewport.height * 0.6];
+    await drag(cdp, mid, [mid[0] - 150, mid[1] + 60]);
+    const homeBox = await page.locator('#home').boundingBox();
+    const offHome = () => page.evaluate(() => {
+      const q = window.__app.model.quaternion, s = window.__app.startQuaternion;
+      return 1 - Math.abs(q.x * s[0] + q.y * s[1] + q.z * s[2] + q.w * s[3]);
+    });
+    if (await offHome() < 1e-3) throw new Error(`${name}: ドラッグで回っていない`);
+    // ドラッグの直後（同じ刻み）のタップは、Chrome がボタンの click にしない（人の指ではありえない速さ）。少し間を空ける
+    await page.waitForTimeout(300);
+    await tap(cdp, [homeBox.x + homeBox.width / 2, homeBox.y + homeBox.height / 2]);
+    // ボタンの click はタッチの後に届き、0.35 秒かけて戻る
+    await page.waitForFunction(() => {
+      const q = window.__app.model.quaternion, s = window.__app.startQuaternion;
+      return 1 - Math.abs(q.x * s[0] + q.y * s[1] + q.z * s[2] + q.w * s[3]) < 1e-6;
+    }, null, { timeout: 5000 }).catch(async () => {
+      throw new Error(`${name}: 「向きを戻す」で最初の向きに戻らない (${await offHome()})`);
+    });
+    await waitRendered(page);
+
+    // 生成した箱を途中まで外す（箱とスロットが埋まりかける）
+    await page.goto(url + '?seed=4&kind=box');
+    await waitRendered(page);
+    await playSolution(page, 8);
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+    await checkLayout();
+    await shoot(`size-${name}-midway`);
+    await playSolution(page);
+    await page.waitForSelector('#overlay:not([hidden])');
+    await shoot(`size-${name}-cleared`);
+    const card = await page.locator('#overlay .card').boundingBox();
+    if (card.x < 0 || card.x + card.width > viewport.width) throw new Error(`${name}: クリアの札が画面からはみ出す`);
+
+    if (name === 'normal') {
+      // 音と振動を切ると、再読み込みしても切れたまま
+      const sb = await page.locator('#sound').boundingBox();
+      await page.locator('#again').click();
+      await tap(cdp, [sb.x + sb.width / 2, sb.y + sb.height / 2]);
+      await page.reload();
+      await waitRendered(page);
+      const pressed = await page.locator('#sound').getAttribute('aria-pressed');
+      if (pressed !== 'false') throw new Error(`音と振動の切り替えが残らない: ${pressed}`);
+    }
+    await context.close();
+  }
+}
+
 const server = await serve();
 const url = `http://127.0.0.1:${server.address().port}/`;
 const browser = await chromium.launch({
@@ -327,6 +446,7 @@ try {
     console.log(`screenshot: ${file}`);
   }
   await context.close();
+  if (only('size')) await sizeShots(browser, errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);
   if (errors.length) throw new Error(`ページでエラー: ${errors.join(' / ')}`);
