@@ -356,3 +356,50 @@ button {
   to { scale: 1.15; }
 }
 @keyframes markOut { to { scale: 1.4; opacity: 0; } }
+
+/* マスコット「ネジまる」（D3）。左下に立たせる。指の操作は下の盤面へ通す。
+   終わりの画面（#overlay、z-index 3）より手前に出して、成功・失敗の動きが見えるようにする */
+#mascot {
+  position: fixed;
+  left: calc(var(--safe-area-inset-left, env(safe-area-inset-left, 0px)) + 4px);
+  bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 6px);
+  width: 108px;
+  height: 140px;
+  pointer-events: none;
+  z-index: 4;
+}
+/* 終わりの画面ではカードの上に大きく乗る（main.js がカードの中へ移す） */
+.card #mascot {
+  position: static;
+  display: block;
+  width: 150px;
+  height: 194px;
+  margin: -150px auto 0;
+}
+
+/* クリアの評価: 星3つ（付いた星は金色で順にはじける）と、時間・自己ベストの行 */
+#end-stars {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: -6px 0 6px;
+  font-size: 40px;
+  line-height: 1;
+  color: #dfe4ec;
+}
+.card #end-stars[hidden], .card #end-score[hidden] { display: none; }
+#end-stars span.on {
+  color: #ffc21a;
+  text-shadow: 0 3px 0 #b07c00, 0 0 12px rgba(255, 210, 80, 0.6);
+  animation: star-pop 0.45s cubic-bezier(0.2, 1.7, 0.4, 1) both;
+}
+@keyframes star-pop { from { transform: scale(0.2) rotate(-40deg); opacity: 0; } }
+.card #end-score {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 16px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+#end-score .new-best { color: #d08a00; font-weight: 800; }

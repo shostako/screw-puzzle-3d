@@ -1,0 +1,174 @@
+import { describe, it, expect } from 'vitest';
+import * as THREE from 'three';
+import { CUE_ACTION, cueAction, ACTIONS, WIN_JUMP, mascotPose, createMascotState } from '../src/mascot-motion.js';
+import { buildMascot, applyPose, frameCamera } from '../src/mascot.js';
+import { VIBRATION, endCue, eventCue, tapCue } from '../src/feedback.js';
+
+const visibleMeshes = (root) => {
+  const out = [];
+  root.traverseVisible((o) => o.isMesh && out.push(o));
+  return out;
+};
+const samples = (action) => {
+  const end = Number.isFinite(ACTIONS[action].s) ? ACTIONS[action].s + 1 : 4;
+  return Array.from({ length: 60 }, (_, i) => (i / 59) * end);
+};
+
+describe('どの合図でどう動くか', () => {
+  it('合図の名前は feedback.js の合図にあるものだけ', () => {
+    for (const cue of Object.keys(CUE_ACTION)) expect(VIBRATION).toHaveProperty(cue);
+    for (const a of Object.values(CUE_ACTION)) expect(ACTIONS).toHaveProperty(a);
+  });
+
+  it('クリアで成功、詰みで失敗、箱が満杯で小さな喜び、外せないねじで困る', () => {
+    expect(cueAction(endCue('cleared'))).toBe('win');
+    expect(cueAction(endCue('stuck'))).toBe('lose');
+    expect(cueAction(eventCue({ type: 'boxFull' }))).toBe('joy');
+    expect(cueAction(tapCue('blocked'))).toBe('flinch');
+    expect(cueAction(tapCue('full'))).toBe('flinch');
+    // ふだんの手（外す・箱やスロットに入る・板が落ちる）では動かない（毎回動くとうるさい）
+    for (const cue of ['unscrew', 'box', 'slot', 'plate', null]) expect(cueAction(cue)).toBeNull();
+  });
+});
+
+describe('動きの切り替え（createMascotState）', () => {
+  const sec = (s) => s * 1000;
+
+  it('小さな喜びと困り顔は、終わると待機へ戻る', () => {
+    const st = createMascotState(0);
+    expect(st.react('boxFull', 0)).toBe(true);
+    expect(st.current(sec(ACTIONS.joy.s / 2)).action).toBe('joy');
+    expect(st.current(sec(ACTIONS.joy.s + 0.01)).action).toBe('idle');
+    st.react('blocked', sec(5));
+    expect(st.current(sec(5 + ACTIONS.flinch.s + 0.01)).action).toBe('idle');
+  });
+
+  it('成功と失敗は、やり直すまでそのまま。ほかの合図に割り込まれない', () => {
+    const st = createMascotState(0);
+    st.react('cleared', 0);
+    expect(st.react('boxFull', sec(1))).toBe(false);
+    expect(st.react('blocked', sec(1))).toBe(false);
+    expect(st.react('stuck', sec(1))).toBe(false);
+    expect(st.current(sec(60)).action).toBe('win');
+    st.reset(sec(61));
+    expect(st.current(sec(61)).action).toBe('idle');
+    st.react('stuck', sec(62));
+    expect(st.react('cleared', sec(63))).toBe(false);
+    expect(st.current(sec(99)).action).toBe('lose');
+  });
+
+  it('小さな喜びは困り顔を上書きし、困り顔は小さな喜びを遮らない。クリアは小さな喜びの途中でも始まる', () => {
+    const st = createMascotState(0);
+    st.react('blocked', 0);
+    expect(st.react('boxFull', 100)).toBe(true);
+    expect(st.react('blocked', 200)).toBe(false);
+    expect(st.current(300).action).toBe('joy');
+    expect(st.react('cleared', 400)).toBe(true);
+    expect(st.current(500)).toEqual({ action: 'win', t: 0.1 });
+  });
+});
+
+describe('姿勢（mascotPose）', () => {
+  it('顔: 待機は縦長の瞳、成功は ^ ^、失敗は × と への字の口と汗', () => {
+    expect(mascotPose('idle', 1, 1)).toMatchObject({ face: 'open', mouth: 'open', brows: 'normal', sweat: null });
+    expect(mascotPose('win', 1)).toMatchObject({ face: 'happy', mouth: 'big' });
+    expect(mascotPose('joy', 0.3)).toMatchObject({ face: 'happy' });
+    expect(mascotPose('flinch', 0.1)).toMatchObject({ face: 'open', brows: 'worried' });
+    const lose = mascotPose('lose', 2);
+    expect(lose).toMatchObject({ face: 'x', mouth: 'sad', brows: 'worried' });
+    expect(mascotPose('lose', 0.3).sweat).toBeNull();
+    for (const t of samples('lose').filter((t) => t > 0.6)) {
+      const s = mascotPose('lose', t).sweat;
+      expect(s).toBeGreaterThanOrEqual(0);
+      expect(s).toBeLessThan(1);
+    }
+  });
+
+  it('待機はときどき瞬きする。「視差効果を減らす」設定では揺れない', () => {
+    const blinks = Array.from({ length: 400 }, (_, i) => mascotPose('idle', 0, i * 0.02).blink);
+    expect(blinks.some(Boolean)).toBe(true);
+    expect(blinks.filter(Boolean).length).toBeLessThan(blinks.length / 10);
+    for (const c of [0.3, 1.1, 2.7]) {
+      const p = mascotPose('idle', 0, c, true);
+      expect(p.y).toBeCloseTo(0, 9);
+      expect(p.sway).toBeCloseTo(0, 9);
+      expect(p.squash).toBeCloseTo(1, 9);
+    }
+  });
+
+  it('成功: 最初の跳びでちょうど1回転し、3回跳んで着地する', () => {
+    expect(mascotPose('win', 0).spin).toBeCloseTo(0);
+    expect(mascotPose('win', WIN_JUMP).spin).toBeCloseTo(Math.PI * 2);
+    const ys = samples('win').filter((t) => t < ACTIONS.win.s).map((t) => mascotPose('win', t).y);
+    expect(Math.max(...ys)).toBeGreaterThan(0.4);
+    expect(mascotPose('win', ACTIONS.win.s - 1e-6).y).toBeLessThan(0.01);
+    expect(mascotPose('win', ACTIONS.win.s + 0.5).spin).toBe(0);
+  });
+
+  it('動きの終わりは待機の姿勢につながる（ぱっと飛ばない）', () => {
+    for (const a of ['joy', 'flinch']) {
+      const end = mascotPose(a, ACTIONS[a].s, 3);
+      const idle = mascotPose('idle', 0, 3);
+      expect(end.y).toBeCloseTo(idle.y, 2);
+      expect(end.headSide).toBeCloseTo(idle.headSide, 2);
+      expect(end.armL[0]).toBeCloseTo(idle.armL[0], 2);
+    }
+  });
+});
+
+describe('ネジまるの立体（mascot.js）', () => {
+  const { root, parts } = buildMascot();
+
+  it('描く回数はどの姿勢でも 24 回まで、三角形は 2 万枚まで（試作は約 140 回）', () => {
+    let tris = 0;
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      const g = o.geometry;
+      tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    });
+    expect(tris).toBeLessThan(20000);
+    for (const a of Object.keys(ACTIONS)) {
+      for (const t of samples(a)) {
+        applyPose(parts, mascotPose(a, t));
+        expect(visibleMeshes(root).length).toBeLessThanOrEqual(24);
+      }
+    }
+  });
+
+  it('材質は同じものを1つの形にまとめている（動かす部分ごとに、材質1つにつき1回）', () => {
+    const seen = new Set();
+    root.traverse((o) => {
+      if (!o.userData.part) return;
+      const mats = o.children.filter((c) => c.isMesh && !c.userData.part).map((c) => c.material);
+      expect(new Set(mats).size).toBe(mats.length);
+      mats.forEach((m) => seen.add(m));
+    });
+    expect(seen.size).toBeGreaterThan(10);
+  });
+
+  it('どの動きでも、左下のキャンバスとカードの上のキャンバスからはみ出さない', () => {
+    const camera = new THREE.PerspectiveCamera();
+    const v = new THREE.Vector3();
+    for (const aspect of [108 / 140, 150 / 194]) {
+      frameCamera(camera, aspect);
+      camera.updateMatrixWorld();
+      for (const a of Object.keys(ACTIONS)) {
+        for (const t of samples(a).filter((_, i) => i % 3 === 0)) {
+          applyPose(parts, mascotPose(a, t), 0.27);
+          root.updateMatrixWorld(true);
+          let x = 0, y = 0;
+          for (const m of visibleMeshes(parts.root)) {
+            const pos = m.geometry.attributes.position;
+            for (let i = 0; i < pos.count; i++) {
+              v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld).project(camera);
+              x = Math.max(x, Math.abs(v.x));
+              y = Math.max(y, Math.abs(v.y));
+            }
+          }
+          expect(x, `${a} ${t.toFixed(2)}s 横`).toBeLessThan(1);
+          expect(y, `${a} ${t.toFixed(2)}s 縦`).toBeLessThan(1);
+        }
+      }
+    }
+  });
+});

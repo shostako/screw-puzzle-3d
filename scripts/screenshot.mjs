@@ -34,6 +34,17 @@
 //   fx-box.png       満杯の箱のふたが閉まり、星が散ったところ
 //   fx-drop.png      盤面の外へ落ちた板が回りながら画面の下へ消えていくところ
 //   あわせて、演出の後に立体の描く物の数が増えていない（板が消えた分だけ減る）ことを確かめる
+//   （マスコット、D3。生成した箱 ?seed=4&kind=box で）
+//   mascot-start.png    開いた直後（左下で待機しているネジまる）
+//   mascot-poses.png    動きごとの姿勢を並べたもの（待機・瞬き・外せない・箱が満杯・成功の回転ジャンプ・成功の後・失敗の震え・失敗の後）
+//   mascot-cleared.png  手順どおりに外してクリアした画面（ネジまるがカードに乗って、跳び終えてバンザイ）
+//   mascot-stuck.png    詰みの画面の見た目（失敗の姿勢を決め打ち。詰みの局面は作らずに、カードの文字だけ替える）
+//   あわせて、隠れたねじのタップで「外せない」、箱が満杯で「小さな喜び」、クリアで「成功」の動きが出ること、
+//   やり直すと待機に戻ること、ネジまるのキャンバスが盤面のタップを遮らないことを確かめる
+//   （クリアの評価。保存の無い新しい端末としてステージ 1 を開く）
+//   rating-first.png  初めてクリアした画面（星・時間と目安。ベストは初めてなので行を出さない）
+//   rating-hint.png   「もう一度」で遊び直し、ヒントを1回使った扱いでクリアした画面（星が1つ減り、前の自己ベストを出す）
+//   あわせて、星の数が rate() の決まりどおりか、自己ベストが再読み込みの後も残るかを確かめる
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -43,7 +54,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,stage,size,fx,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ、fx は分解の演出、undo は戻る
+// SHOTS=box,gen,stage,size,fx,mascot,rating,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、undo は戻る
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -540,6 +551,160 @@ async function fxShots(context, errors, outside) {
   await context.close();
 }
 
+// マスコット（D3）。姿勢を決め打ちして並べて撮り、実際の合図（外せない・箱が満杯・クリア）で動くことを確かめる
+const MASCOT_POSES = [['idle', 0.5], ['idle', 0.05], ['flinch', 0.12], ['joy', 0.37], ['win', 0.2], ['win', 4], ['lose', 0.2], ['lose', 2.4]];
+async function mascotShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const save = async (name, clip) => {
+    const path = join(outDir, `${name}.png`);
+    await page.screenshot({ path, clip });
+    console.log(`screenshot: ${path}`);
+  };
+  const history = () => page.evaluate(() => [...window.__app.mascot.history]);
+  const nextFrames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.goto(url + '?seed=4&kind=box');
+  await waitRendered(page);
+  await nextFrames();
+  await save('mascot-start');
+
+  // ネジまるのキャンバスの上をタップしても、下の盤面へ届く（pointer-events: none）
+  const box = await page.locator('#mascot').boundingBox();
+  const hit = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.id, [box.x + box.width / 2, box.y + box.height / 2]);
+  if (hit !== 'stage') throw new Error(`ネジまるの上のタップが盤面に届かない: ${hit}`);
+
+  // 姿勢を決め打ちして、1枚ずつ撮ってから横に並べる（並べるのはページの中のキャンバスで）
+  const tiles = [];
+  for (const [action, t] of MASCOT_POSES) {
+    await page.evaluate(([a, t]) => window.__app.mascot.force(a, t), [action, t]);
+    await nextFrames();
+    tiles.push((await page.screenshot({ clip: box })).toString('base64'));
+  }
+  await page.evaluate(() => window.__app.mascot.force(null));
+  const sheet = await page.evaluate(async ([tiles, w, h]) => {
+    const c = document.createElement('canvas');
+    c.width = w * 4;
+    c.height = h * 2;
+    const g = c.getContext('2d');
+    g.fillStyle = '#eaf4ff';
+    g.fillRect(0, 0, c.width, c.height);
+    for (const [i, b64] of tiles.entries()) {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      g.drawImage(img, (i % 4) * w, Math.floor(i / 4) * h, w, h);
+    }
+    return c.toDataURL('image/png').split(',')[1];
+  }, [tiles, Math.round(box.width * 2), Math.round(box.height * 2)]);
+  const { writeFile } = await import('node:fs/promises');
+  await writeFile(join(outDir, 'mascot-poses.png'), Buffer.from(sheet, 'base64'));
+  console.log(`screenshot: ${join(outDir, 'mascot-poses.png')}`);
+
+  // 隠れたねじをタップすると「外せない」
+  const blocked = await page.evaluate(() => {
+    const g = window.__app.game, legal = new Set(g.legal());
+    return Object.keys(g.state.where).find((id) => g.state.where[id] === 'board' && !legal.has(id));
+  });
+  if (!blocked) throw new Error('隠れたねじが見つからない');
+  if (await page.evaluate((id) => window.__app.tapScrew(id), blocked) !== 'blocked') throw new Error(`ねじ ${blocked} が隠れていない`);
+  if (!(await history()).includes('flinch')) throw new Error(`外せないねじのタップでネジまるが動かない: ${await history()}`);
+  await waitRendered(page);
+
+  // 手順どおりに外し切る。途中で箱が満杯になると「小さな喜び」、クリアで「成功」
+  await playSolution(page);
+  await page.waitForSelector('#overlay:not([hidden])');
+  const h = await history();
+  if (!h.includes('joy')) throw new Error(`箱が満杯でネジまるが喜ばない: ${h}`);
+  if (h.at(-1) !== 'win' || await page.evaluate(() => window.__app.mascot.action) !== 'win') throw new Error(`クリアでネジまるが成功の動きをしない: ${h}`);
+  // 跳び終えてバンザイしたところ（成功の動きは 3.3 秒）を撮る
+  await page.waitForTimeout(3600);
+  await page.evaluate(() => window.__app.timeScale(0));
+  await nextFrames();
+  await save('mascot-cleared');
+  await page.evaluate(() => window.__app.timeScale(1));
+  // 失敗はカードの上で、詰みの画面と同じ置き方で姿勢だけ決め打ちして撮る
+  await page.evaluate(() => {
+    document.getElementById('overlay').className = 'stuck';
+    document.getElementById('end-title').textContent = '詰み';
+    document.getElementById('end-text').textContent = '外せるねじが無くなった';
+    document.getElementById('again').textContent = 'やり直す';
+    document.getElementById('end-stars').hidden = true;
+    document.getElementById('end-score').hidden = true;
+    window.__app.mascot.force('lose', 2.4);
+  });
+  await nextFrames();
+  await save('mascot-stuck');
+  await page.evaluate(() => window.__app.mascot.force(null));
+
+  // やり直すと待機に戻る
+  const again = await page.locator('#again').boundingBox();
+  await tap(cdp, [again.x + again.width / 2, again.y + again.height / 2]);
+  await waitRendered(page);
+  const after = await page.evaluate(() => window.__app.mascot.action);
+  if (after !== 'idle') throw new Error(`やり直してもネジまるが待機に戻らない: ${after}`);
+  await context.close();
+}
+
+// クリアの評価。ステージ 1 を2回クリアして、星・時間・自己ベストの出方を撮る
+async function ratingShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const save = async (name) => {
+    const path = join(outDir, `${name}.png`);
+    await page.screenshot({ path });
+    console.log(`screenshot: ${path}`);
+  };
+  const card = () => page.evaluate(() => ({
+    stars: document.querySelectorAll('#end-stars span.on').length,
+    shown: !document.getElementById('end-stars').hidden,
+    score: document.getElementById('end-score').innerText,
+    rating: window.__app.rating,
+  }));
+  // 星がはじけ終わるまで待ってから撮る
+  const settle = () => page.waitForTimeout(1400);
+  await page.goto(url);
+  await waitRendered(page);
+  if (await page.evaluate(() => window.__app.stage) !== 1) throw new Error('新しい端末がステージ 1 から始まらない');
+  await playSolution(page);
+  await page.waitForSelector('#overlay:not([hidden])');
+  const first = await card();
+  const want = (r) => Math.max(1, 3 - r.hints - r.rewinds - (r.seconds > r.par ? 1 : 0));
+  if (!first.shown || first.stars !== first.rating.stars || first.stars !== want(first.rating)) throw new Error(`初めてのクリアの星が合わない: ${JSON.stringify(first)}`);
+  if (!first.score.includes('目安') || first.score.includes('自己ベスト')) throw new Error(`初めてのクリアの行が合わない: ${first.score}`);
+  await settle();
+  await save('rating-first');
+
+  // 「もう一度」（次へがあるので控えめのボタン）で遊び直し、ヒントを1回使った扱いでクリアする
+  const again = await page.locator('#again').boundingBox();
+  await tap(cdp, [again.x + again.width / 2, again.y + again.height / 2]);
+  await waitRendered(page);
+  if (await page.evaluate(() => window.__app.playSeconds) > 30) throw new Error('遊び直しで時計が 0 に戻らない');
+  await page.evaluate(() => window.__app.countHint());
+  await playSolution(page);
+  await page.waitForSelector('#overlay:not([hidden])');
+  const second = await card();
+  if (second.rating.hints !== 1 || second.stars !== want(second.rating) || second.stars > 2) throw new Error(`ヒントを使ったクリアの星が合わない: ${JSON.stringify(second)}`);
+  const best = first.rating.stars > second.stars || (first.rating.stars === second.stars && first.rating.seconds <= second.rating.seconds);
+  if (best && !second.score.includes('自己ベスト ★')) throw new Error(`前の自己ベストが出ない: ${second.score}`);
+  await settle();
+  await save('rating-hint');
+
+  // 自己ベストは再読み込みの後も残る
+  const kept = await page.evaluate(() => JSON.parse(localStorage.getItem('screw-puzzle-3d.best'))?.[1]);
+  if (!kept || kept.stars !== Math.max(first.rating.stars, second.stars)) throw new Error(`自己ベストが保存されていない: ${JSON.stringify(kept)}`);
+  await page.reload();
+  await waitRendered(page);
+  const after = await page.evaluate(() => JSON.parse(localStorage.getItem('screw-puzzle-3d.best'))?.[1]);
+  if (JSON.stringify(after) !== JSON.stringify(kept)) throw new Error('再読み込みで自己ベストが変わった');
+  await context.close();
+}
+
 // 戻る。生成した箱を手順どおりに途中まで外し、右下の「1手戻す」で2手戻して外し直すと同じ局面になること、
 // わざと待機スロットへ入れて詰ませ、詰みの画面の「1手戻す」と「解ける所まで戻る」が効くことを確かめる
 async function undoShots(context, errors, outside) {
@@ -663,9 +828,11 @@ try {
     console.log(`screenshot: ${file}`);
   }
   await context.close();
+  if (only('mascot')) await mascotShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('fx')) await fxShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('size')) await sizeShots(browser, errors, outside);
   if (only('undo')) await undoShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('rating')) await ratingShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);
   if (errors.length) throw new Error(`ページでエラー: ${errors.join(' / ')}`);

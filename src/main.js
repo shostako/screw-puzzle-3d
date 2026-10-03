@@ -3,6 +3,8 @@ import { createGesture } from './gesture.js';
 import { dragRotation, zoomDistance, radPerPx } from './view.js';
 import { buildBoard } from './scene.js';
 import { THEME, cssVariables } from './theme.js';
+import { bakeEnvironment } from './env.js';
+import { createMascot } from './mascot.js';
 import { createGame, hudOf, applyEvent, rewindPoint } from './game.js';
 import { safeBlocker } from './safe.js';
 import { nearestScrew } from './pick.js';
@@ -12,6 +14,7 @@ import { generateLevel, KINDS } from './generator.js';
 import { BOX_LEVEL } from './levels/box.js';
 import { stageLevel, START_VIEW as START_EULER } from './stages.js';
 import { createProgress, deviceStorage } from './progress.js';
+import { rate, clock, createPlayClock, createBests, MAX_STARS } from './rating.js';
 import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
 import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf } from './effects.js';
 
@@ -24,6 +27,7 @@ const freeSeed = Number.parseInt(query.get('seed') ?? '', 10);
 const fixedBox = query.get('level') === 'box';
 const freePlay = fixedBox || Number.isFinite(freeSeed);
 const progress = createProgress(freePlay ? null : deviceStorage());
+const bests = createBests(freePlay ? null : deviceStorage());
 const askedStage = Number.parseInt(query.get('stage') ?? '', 10);
 let stage = Number.isInteger(askedStage) && askedStage >= 1 ? askedStage : progress.stage;
 
@@ -91,34 +95,6 @@ camera.position.set(0, 0, distance);
 }
 // 艶の映り込み。起動時に1回だけ、小さな空の景色を PMREM に焼いて全部の材質で使う
 scene.environment = bakeEnvironment(renderer);
-
-function bakeEnvironment(r) {
-  const { stops, windows } = THEME.env;
-  const c = document.createElement('canvas');
-  c.width = 4;
-  c.height = 128;
-  const g = c.getContext('2d');
-  const grad = g.createLinearGradient(0, 0, 0, c.height);
-  for (const [o, color] of stops) grad.addColorStop(o, color);
-  g.fillStyle = grad;
-  g.fillRect(0, 0, c.width, c.height);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const env = new THREE.Scene();
-  env.add(new THREE.Mesh(new THREE.SphereGeometry(20, 16, 8), new THREE.MeshBasicMaterial({ side: THREE.BackSide, map: tex })));
-  for (const [x, y, z, w, h] of windows) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
-    m.position.set(x, y, z);
-    m.lookAt(0, 0, 0);
-    env.add(m);
-  }
-  const pmrem = new THREE.PMREMGenerator(r);
-  const out = pmrem.fromScene(env, 0.02).texture;
-  pmrem.dispose();
-  env.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
-  tex.dispose();
-  return out;
-}
 
 // 立体はこの group ごと回す。盤面は中に作り直す（やり直し）
 const model = new THREE.Group();
@@ -452,6 +428,18 @@ function newGameFor(level) {
   safe = null;
 }
 newGameFor(LEVEL);
+
+// クリアの評価に使う、この回の記録。時計は盤面を出した瞬間から、クリアか詰みのタップで止める。
+// アプリが裏に回っている間は数えない。ヒントと戻るの回数は、それらの機能が countHint / countRewind を呼ぶ
+const playClock = createPlayClock(() => performance.now());
+const tally = { hints: 0, rewinds: 0 };
+const countHint = () => { tally.hints++; };
+const countRewind = () => { tally.rewinds++; };
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) playClock.pause();
+  else if (game.status === 'playing' && !loading) playClock.resume();
+});
+
 let hud = hudOf(game.state);   // いま画面に出している箱とスロット（演出の途中の様子）
 let queue = [];                // まだ見せていない出来事のまとまり { events, obj（外したねじ）, out（抜けきったら resolve）, status }
 let playing = false;
@@ -497,7 +485,7 @@ async function play() {
         el.classList.add('closing');
         await wait(tl.cue - tl.lid);
         if (gen !== generation) break;
-        feedback.cue('boxFull');
+        cue('boxFull');
         sparkle(el);
         await wait(tl.leave - tl.cue);
         el.classList.add('done');
@@ -505,7 +493,7 @@ async function play() {
       }
       if (gen !== generation) break;
       // 板の落ちる音はタップの瞬間に、箱が閉まる音はふたが閉まる瞬間に鳴らしている
-      if (ev.type !== 'plate' && ev.type !== 'boxFull') feedback.cue(eventCue(ev));
+      if (ev.type !== 'plate' && ev.type !== 'boxFull') cue(eventCue(ev));
       hud = after;
       renderHud(hud, ev.type === 'boxSpawn' ? ev.box : -1);
       landAt(ev, before);
@@ -520,7 +508,7 @@ async function play() {
 function tapScrew(id) {
   const obj = board.screws.get(id);
   const r = game.tap(id);
-  feedback.cue(tapCue(r.reason));
+  cue(tapCue(r.reason));
   if (r.reason === 'blocked') {
     shake(obj);
     const by = movableBlockers(id);
@@ -539,8 +527,9 @@ function tapScrew(id) {
     syncPlates(physics, game.state);   // 1本になった板はぶら下がり、0本の板は落ち始める
     const fallen = r.events.filter((ev) => eventCue(ev) === 'plate');
     for (const ev of fallen) burst(board.plates.get(ev.plate));
-    if (fallen.length) feedback.cue('plate');
+    if (fallen.length) cue('plate');
     requestRender();
+    if (r.status !== 'playing') playClock.pause();   // 時間は決着のタップまで（演出を待つ間は数えない）
     queue.push({ events: r.events, obj, out, status: r.status });
     play();
   }
@@ -562,11 +551,13 @@ function showEnd(status) {
   const ov = $('overlay');
   ov.className = status;
   const cleared = status === 'cleared';
-  feedback.cue(endCue(status));
+  seatMascot(true);
+  cue(endCue(status));
   // クリアしたらその場で次のステージを保存する（ボタンを押す前に閉じても、次は続きから）
   if (cleared && !freePlay) progress.cleared(stage);
   $('end-title').textContent = cleared ? (freePlay ? 'クリア！' : `ステージ ${stage} クリア！`) : '詰み';
   $('end-text').textContent = cleared ? 'すべての箱を埋めた' : '外せるねじが無くなった';
+  showRating(cleared);
   const next = cleared && !freePlay;
   $('next').hidden = !next;
   // 詰みからは、解ける所まで一気に戻すか、1手戻す
@@ -578,6 +569,45 @@ function showEnd(status) {
   $('again').classList.toggle('sub', next || !cleared);
   ov.hidden = false;
   showUndo();
+}
+
+// クリアの星と時間、自己ベスト。詰みでは出さない
+let lastRating = null;
+function showRating(cleared) {
+  const starsEl = $('end-stars');
+  const scoreEl = $('end-score');
+  starsEl.hidden = !cleared;
+  scoreEl.hidden = !cleared;
+  if (!cleared) return;
+  const seconds = playClock.seconds;
+  const r = rate({ screws: LEVEL.screws.length, seconds, hints: tally.hints, rewinds: tally.rewinds });
+  lastRating = { ...r, seconds, hints: tally.hints, rewinds: tally.rewinds, best: null };
+  starsEl.setAttribute('aria-label', `星 ${r.stars} つ`);
+  starsEl.replaceChildren(...Array.from({ length: MAX_STARS }, (_, i) => {
+    const el = document.createElement('span');
+    el.textContent = '★';
+    if (i < r.stars) {
+      el.className = 'on';
+      el.style.animationDelay = `${0.35 + i * 0.18}s`;
+    }
+    return el;
+  }));
+  const lines = [`時間 ${clock(seconds)}（目安 ${clock(r.par)}）`];
+  const used = [tally.hints && `ヒント ${tally.hints} 回`, tally.rewinds && `戻る ${tally.rewinds} 回`].filter(Boolean);
+  if (used.length) lines.push(used.join('・'));
+  if (!freePlay) {
+    const b = bests.record(stage, { stars: r.stars, seconds });
+    lastRating.best = b;
+    lines.push(b.improved
+      ? (b.old ? '自己ベスト更新！' : '')
+      : `自己ベスト ${'★'.repeat(b.old.stars)}${'☆'.repeat(MAX_STARS - b.old.stars)} ${clock(b.old.seconds)}`);
+  }
+  scoreEl.replaceChildren(...lines.filter(Boolean).map((t) => {
+    const el = document.createElement('span');
+    el.textContent = t;
+    if (t.startsWith('自己ベスト更新')) el.className = 'new-best';
+    return el;
+  }));
 }
 
 function showStage() {
@@ -630,6 +660,12 @@ function restart() {
   physics = createPhysics(LEVEL);
   game.restart();
   snaps = [];
+  tally.hints = 0;
+  tally.rewinds = 0;
+  playClock.reset();
+  if (!document.hidden) playClock.resume();
+  mascot.reset();
+  seatMascot(false);
   syncPlates(physics, game.state);
   showState();
 }
@@ -654,13 +690,21 @@ function showState() {
 // ---- 戻る ----
 
 // k 手目を外す直前へ戻す（ルールの状態と物理の写しを一緒に）。戻した局面は、そのとき揺れていた板は揺れの途中から続く
+// 戻すたびにクリアの評価の「戻る」を1回数える。詰みから戻したときは、止めていた時計を動かし、ネジまるを左下へ戻す
 function rewindTo(k) {
+  const ended = game.status !== 'playing';
   if (!game.rewind(k)) return false;
   physics.restore(snaps[k]);
   snaps.length = k;
+  countRewind();
+  if (ended) {
+    if (!document.hidden) playClock.resume();
+    mascot.reset();
+    seatMascot(false);
+  }
   rebuildBoard();
   showState();
-  feedback.cue('undo');
+  cue('undo');
   return true;
 }
 
@@ -798,6 +842,20 @@ $('home').addEventListener('click', goHome);
 
 // 音と振動の入り切り（端末に保存する）
 const feedback = createFeedback(deviceStorage());
+
+// マスコット「ネジまる」（D3）。左下の小さなキャンバスに別の描き手で描き、演出の時計で動く。
+// 合図（cue）を音と振動と同じ名前で受けて、成功・失敗・箱が満杯・外せないねじに反応する（音を切っていても動く）
+const mascot = createMascot($('mascot'), { clock: fxClock, environment: bakeEnvironment });
+function cue(name) {
+  feedback.cue(name);
+  if (name) mascot.react(name);
+}
+// 終わりの画面では、ネジまるをカードの上に大きく乗せる（成功・失敗の動きを見せる）。やり直すと左下へ戻す
+function seatMascot(onCard) {
+  const c = $('mascot');
+  if (onCard) $('overlay').querySelector('.card').prepend(c);
+  else document.body.insertBefore(c, $('flyers'));
+}
 const soundButton = $('sound');
 function showSound() {
   soundButton.classList.toggle('off', !feedback.on);
@@ -807,7 +865,7 @@ function showSound() {
 soundButton.addEventListener('click', () => {
   feedback.on = !feedback.on;
   showSound();
-  feedback.cue('box');
+  feedback.cue('box');   // 切り替えの確かめの音（マスコットは動かさない）
 });
 showSound();
 $('again').addEventListener('click', restart);
@@ -914,8 +972,20 @@ window.__app = {
     requestRender();
   },
   visibleScrews,
+  // マスコット: 今の動き、合図を送る、姿勢を決め打ちする（動きの名前と秒。null で戻す）
+  mascot: {
+    get action() { return mascot.action; },
+    history: mascot.history,
+    react: (name) => mascot.react(name),
+    force: (action, t) => mascot.force(action, t),
+  },
   legal: () => game.legal(),
   // 生成した盤面の、解ける手順
   get solution() { return LEVEL.meta?.solution ?? null; },
   get level() { return LEVEL.meta; },
+  // クリアの評価: 遊んだ時間（秒）と、最後に出した評価。countHint / countRewind はヒントと戻るの回数を数える
+  get playSeconds() { return playClock.seconds; },
+  get rating() { return lastRating; },
+  countHint,
+  countRewind,
 };
