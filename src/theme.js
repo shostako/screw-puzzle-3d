@@ -55,6 +55,26 @@ export const THEME = {
     steel: '#c4c9d0',
   },
 
+  // マスコット「ネジまる」（mascot.js）: 金色アルマイトの頭、銀のねじ部と脚、白いソフビの腕と手袋、青い靴、黒い六角レンチ
+  mascot: {
+    gold: '#ffbf00',
+    steel: '#cfd2d6',
+    vinyl: '#f6f5f1',
+    shoe: '#1d5fd8',
+    key: '#26282c',
+    socket: '#2b2d31',
+    ink: '#1a1210',
+    eyeWhite: '#ffffff',
+    iris: '#3a1d0c',
+    irisLow: '#7d4a1e',
+    cheek: '#ff8fa3',
+    mouth: '#5c1414',
+    tongue: '#ff7f9a',
+    sweat: '#52b8ff',
+    shadow: '#3c5a82',   // 足もとの影（半透明の楕円）
+    shadowOpacity: 0.2,
+  },
+
   // 背景（CSS で描く。3D の外なので描く負荷が無い）
   sky: ['#9fd3ff', '#e6f4ff', '#fff4d6'],   // 上・中ほど・下
   mat: '#ffffff',
