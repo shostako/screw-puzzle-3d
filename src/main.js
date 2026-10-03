@@ -13,6 +13,7 @@ import { generateLevel, KINDS } from './generator.js';
 import { BOX_LEVEL } from './levels/box.js';
 import { stageLevel, START_VIEW as START_EULER } from './stages.js';
 import { createProgress, deviceStorage } from './progress.js';
+import { rate, clock, createPlayClock, createBests, MAX_STARS } from './rating.js';
 import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
 import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf } from './effects.js';
 
@@ -25,6 +26,7 @@ const freeSeed = Number.parseInt(query.get('seed') ?? '', 10);
 const fixedBox = query.get('level') === 'box';
 const freePlay = fixedBox || Number.isFinite(freeSeed);
 const progress = createProgress(freePlay ? null : deviceStorage());
+const bests = createBests(freePlay ? null : deviceStorage());
 const askedStage = Number.parseInt(query.get('stage') ?? '', 10);
 let stage = Number.isInteger(askedStage) && askedStage >= 1 ? askedStage : progress.stage;
 
@@ -422,6 +424,18 @@ function newGameFor(level) {
   colorOf = new Map(level.screws.map((s) => [s.id, s.color]));
 }
 newGameFor(LEVEL);
+
+// クリアの評価に使う、この回の記録。時計は盤面を出した瞬間から、クリアか詰みのタップで止める。
+// アプリが裏に回っている間は数えない。ヒントと戻るの回数は、それらの機能が countHint / countRewind を呼ぶ
+const playClock = createPlayClock(() => performance.now());
+const tally = { hints: 0, rewinds: 0 };
+const countHint = () => { tally.hints++; };
+const countRewind = () => { tally.rewinds++; };
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) playClock.pause();
+  else if (game.status === 'playing' && !loading) playClock.resume();
+});
+
 let hud = hudOf(game.state);   // いま画面に出している箱とスロット（演出の途中の様子）
 let queue = [];                // まだ見せていない出来事のまとまり { events, obj（外したねじ）, out（抜けきったら resolve）, status }
 let playing = false;
@@ -509,6 +523,7 @@ function tapScrew(id) {
     for (const ev of fallen) burst(board.plates.get(ev.plate));
     if (fallen.length) cue('plate');
     requestRender();
+    if (r.status !== 'playing') playClock.pause();   // 時間は決着のタップまで（演出を待つ間は数えない）
     queue.push({ events: r.events, obj, out, status: r.status });
     play();
   }
@@ -535,11 +550,51 @@ function showEnd(status) {
   if (cleared && !freePlay) progress.cleared(stage);
   $('end-title').textContent = cleared ? (freePlay ? 'クリア！' : `ステージ ${stage} クリア！`) : '詰み';
   $('end-text').textContent = cleared ? 'すべての箱を埋めた' : '外せるねじが無くなった';
+  showRating(cleared);
   const next = cleared && !freePlay;
   $('next').hidden = !next;
   $('again').textContent = cleared ? 'もう一度' : 'やり直す';
   $('again').classList.toggle('sub', next);
   ov.hidden = false;
+}
+
+// クリアの星と時間、自己ベスト。詰みでは出さない
+let lastRating = null;
+function showRating(cleared) {
+  const starsEl = $('end-stars');
+  const scoreEl = $('end-score');
+  starsEl.hidden = !cleared;
+  scoreEl.hidden = !cleared;
+  if (!cleared) return;
+  const seconds = playClock.seconds;
+  const r = rate({ screws: LEVEL.screws.length, seconds, hints: tally.hints, rewinds: tally.rewinds });
+  lastRating = { ...r, seconds, hints: tally.hints, rewinds: tally.rewinds, best: null };
+  starsEl.setAttribute('aria-label', `星 ${r.stars} つ`);
+  starsEl.replaceChildren(...Array.from({ length: MAX_STARS }, (_, i) => {
+    const el = document.createElement('span');
+    el.textContent = '★';
+    if (i < r.stars) {
+      el.className = 'on';
+      el.style.animationDelay = `${0.35 + i * 0.18}s`;
+    }
+    return el;
+  }));
+  const lines = [`時間 ${clock(seconds)}（目安 ${clock(r.par)}）`];
+  const used = [tally.hints && `ヒント ${tally.hints} 回`, tally.rewinds && `戻る ${tally.rewinds} 回`].filter(Boolean);
+  if (used.length) lines.push(used.join('・'));
+  if (!freePlay) {
+    const b = bests.record(stage, { stars: r.stars, seconds });
+    lastRating.best = b;
+    lines.push(b.improved
+      ? (b.old ? '自己ベスト更新！' : '')
+      : `自己ベスト ${'★'.repeat(b.old.stars)}${'☆'.repeat(MAX_STARS - b.old.stars)} ${clock(b.old.seconds)}`);
+  }
+  scoreEl.replaceChildren(...lines.filter(Boolean).map((t) => {
+    const el = document.createElement('span');
+    el.textContent = t;
+    if (t.startsWith('自己ベスト更新')) el.className = 'new-best';
+    return el;
+  }));
 }
 
 function showStage() {
@@ -584,6 +639,10 @@ function restart() {
   physics = createPhysics(LEVEL);
   stepClock = 0;
   game.restart();
+  tally.hints = 0;
+  tally.rewinds = 0;
+  playClock.reset();
+  if (!document.hidden) playClock.resume();
   mascot.reset();
   seatMascot(false);
   syncPlates(physics, game.state);
@@ -810,4 +869,9 @@ window.__app = {
   // 生成した盤面の、解ける手順
   get solution() { return LEVEL.meta?.solution ?? null; },
   get level() { return LEVEL.meta; },
+  // クリアの評価: 遊んだ時間（秒）と、最後に出した評価。countHint / countRewind はヒントと戻るの回数を数える
+  get playSeconds() { return playClock.seconds; },
+  get rating() { return lastRating; },
+  countHint,
+  countRewind,
 };
