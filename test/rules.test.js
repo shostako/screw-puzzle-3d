@@ -262,3 +262,56 @@ describe('1局を最後まで', () => {
     expect(status(broken)).toBe('stuck');
   });
 });
+
+describe('部品の親子（D5）', () => {
+  // body の子が wheel、wheel の子が cap。どれも 2 本。赤 2 箱
+  const tree = () => {
+    const lv = level(['body', 'wheel', 'cap'], [
+      ['b1', 'body', 'red'], ['b2', 'body', 'red'], ['w1', 'wheel', 'red'], ['w2', 'wheel', 'red'], ['c1', 'cap', 'red'], ['c2', 'cap', 'red'],
+    ], ['red', 'red']);
+    lv.plates[1].parent = 'body';
+    lv.plates[2].parent = 'wheel';
+    return lv;
+  };
+
+  it('子の板が残っている間は、親の最後のねじは外せない（held）。ぶら下げるまでは外せる', () => {
+    let st = newGame(tree());
+    st = play(st, ['b1']);
+    expect(plateState(st, 'body')).toBe('hanging');
+    expect(checkRemove(st, 'b2')).toBe('held');
+    const r = removeScrew(st, 'b2');
+    expect(r.ok).toBe(false);
+    expect(r.state).toBe(st);
+    expect(legalMoves(st)).not.toContain('b2');
+  });
+
+  it('子が落ちれば親を落とせる。孫が残っていれば子も落とせない', () => {
+    let st = newGame(tree());
+    st = play(st, ['b1', 'w1']);
+    expect(checkRemove(st, 'w2')).toBe('held');   // cap が残っている
+    st = play(st, ['c1', 'c2']);
+    expect(checkRemove(st, 'b2')).toBe('held');   // wheel が残っている
+    st = play(st, ['w2', 'b2']);
+    expect(status(st)).toBe('cleared');
+  });
+
+  it('子が残っていても、親のねじが 2 本以上残るうちは外せる。隠れているかより先に held を返す', () => {
+    const st = newGame(tree());
+    expect(checkRemove(st, 'b1')).toBe('ok');
+    const s2 = play(st, ['b1']);
+    expect(checkRemove(s2, 'b2', () => true)).toBe('held');
+  });
+
+  it('親を外せないだけで外せるねじが無くなれば詰み', () => {
+    const lv = tree();
+    // cap のねじが全部隠れている（隠しているのは盤面に無いもの扱いの仮の判定）と、body も wheel も落とせない
+    let st = play(newGame(lv), ['b1', 'w1']);
+    expect(status(st, (id) => id.startsWith('c'))).toBe('stuck');
+  });
+
+  it('親の id が無い板は受け付けない', () => {
+    const lv = tree();
+    lv.plates[2].parent = 'nothing';
+    expect(() => validateLevel(lv)).toThrow(/親/);
+  });
+});

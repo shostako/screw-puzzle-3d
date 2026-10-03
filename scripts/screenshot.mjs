@@ -38,6 +38,7 @@
 //   theme-<題材>.png        開いた直後
 //   theme-<題材>-below.png  下から見上げた向き（車輪・脚の裏のねじ）
 //   theme-car-midway.png / theme-car-cleared.png  車を手順どおりに 9 本外したところと、クリアの画面
+//   theme-car-held.png      子の部品（窓・屋根）が付いた客室の最後のねじをタップして、子の部品が光ったところ（D5）
 //   （マスコット、D3。生成した箱 ?seed=4&kind=box で）
 //   mascot-start.png    開いた直後（左下で待機しているネジまる）
 //   mascot-poses.png    動きごとの姿勢を並べたもの（待機・瞬き・外せない・箱が満杯・成功の回転ジャンプ・成功の後・失敗の震え・失敗の後）
@@ -304,6 +305,41 @@ const themeShots = [
   { name: 'theme-car-cleared', act: async (cdp, page) => {
     await playSolution(page);
     await page.waitForSelector('#overlay:not([hidden])');
+  } },
+  // D5: 子の部品（窓・屋根）が付いた客室の最後のねじをタップすると、外せずに子の部品が光る
+  { name: 'theme-car-held', query: `?seed=${THEMED[0][1]}&kind=car`, wait: false, act: async (cdp, page) => {
+    await page.evaluate(() => window.__app.view(0.3, -0.9, 0, 17));
+    await waitRendered(page);
+    // 片側の窓を外して客室のねじを見せ、客室のねじを外せるものから外していき、最後の 1 本で held になるまで
+    // （もう片側の窓と屋根が付いたまま）。落ちた窓に隠れていたら、向きを変えて払い落とす
+    const ids = (plate) => page.evaluate((plate) => {
+      const g = window.__app.game;
+      return g.state.level.screws.filter((x) => x.plate === plate && g.state.where[x.id] === 'board').map((x) => x.id);
+    }, plate);
+    let last = null;
+    for (let k = 0; k < 24 && last !== 'held'; k++) {
+      for (const id of [...await ids('window1'), ...await ids('cabin')]) {
+        last = await page.evaluate((id) => window.__app.tapScrew(id), id);
+        await waitRendered(page);
+        if (last === 'held') break;
+      }
+      if (last !== 'held') {
+        await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k % VIEWS.length]);
+        await waitRendered(page);
+      }
+    }
+    if (last !== 'held') throw new Error('客室の最後のねじが held にならない');
+    // 残っている窓（window2、車の -z の側）が見える向き
+    await page.evaluate(() => window.__app.view(0.35, 2.4, 0, 17));
+    await waitRendered(page);
+    // もう一度タップして、光が強い所（FX.held の 1/4）で演出の時計を止めて撮る
+    await page.evaluate(() => {
+      const last = window.__app.game.state.level.screws.filter((s) => s.plate === 'cabin' && window.__app.game.state.where[s.id] === 'board');
+      window.__app.tapScrew(last[0].id);
+    });
+    await page.waitForTimeout(170);
+    await page.evaluate(() => window.__app.timeScale(0));
+    await page.waitForTimeout(150);
   } },
 ];
 
@@ -933,7 +969,7 @@ try {
       await waitRendered(page);
     }
     await s.act(cdp, page);
-    await waitRendered(page);
+    if (s.wait !== false) await waitRendered(page);
     const file = join(outDir, `${s.name}.png`);
     await page.screenshot({ path: file });
     console.log(`screenshot: ${file}`);

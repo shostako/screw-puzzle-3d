@@ -10,7 +10,7 @@
 // 返り値: 外す順番（ねじの id の配列）/ false（手順が無い）/ null（調べる局面の数 budget を超えて打ち切り）
 // from を渡すと、その途中の局面から探す（戻る先を探すため）。省略すると始めの局面から
 
-import { newGame, removeScrew, legalMoves, checkRemove, isCleared, openBoxFor } from './rules.js';
+import { newGame, removeScrew, legalMoves, checkRemove, isCleared, openBoxFor, heldBy } from './rules.js';
 
 export function solve(level, isBlocked, { budget = 5000, from = null } = {}) {
   const colorOf = new Map(level.screws.map((s) => [s.id, s.color]));
@@ -50,8 +50,12 @@ export function solve(level, isBlocked, { budget = 5000, from = null } = {}) {
     if (dead.has(key)) return false;
     const legal = legalMoves(st, isBlocked);
     // 箱へ入れる手を先に。中でも板を外し切る手（残り1本）を先に、板をぶら下げる手（残り2本）を後に試す。
-    // ぶら下がった板は届く範囲全部を隠すとみなすので、増やさないほうが先へ進みやすい
-    const rank = (id) => (st.left[plateOf.get(id)] === 1 ? 0 : 1);
+    // ぶら下がった板は届く範囲全部を隠すとみなすので、増やさないほうが先へ進みやすい。
+    // 子の部品が残っている板（D5: 子を外すまで落とせない）をぶら下げる手は一番後に（長くぶら下がったまま周りを隠し続けるため）
+    const rank = (id) => {
+      const p = plateOf.get(id);
+      return st.left[p] === 1 ? 0 : heldBy(st, p).length ? 2 : 1;
+    };
     const moves = legal.filter((id) => openBoxFor(st, colorOf.get(id)) >= 0).sort((a, b) => rank(a) - rank(b));
     if (st.slots.includes(null)) {
       const byColor = new Map();

@@ -18,7 +18,7 @@ export const SETTING_KEY = 'screw-puzzle-3d.sound';
 
 // タップの結果（game.tap の reason）の合図
 export function tapCue(reason) {
-  return { ok: 'unscrew', blocked: 'blocked', full: 'full' }[reason] ?? null;
+  return { ok: 'unscrew', blocked: 'blocked', held: 'blocked', full: 'full' }[reason] ?? null;
 }
 
 // removeScrew の出来事の合図（演出でその出来事を見せるときに鳴らす）
