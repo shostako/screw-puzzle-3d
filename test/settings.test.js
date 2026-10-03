@@ -11,9 +11,9 @@ function memoryStorage(init = {}) {
 }
 
 describe('設定', () => {
-  it('既定: 音と振動は入り、回す速さはふつう、画質は自動、ネジまるは出す', () => {
+  it('既定: 音・BGM・振動は入り、回す速さはふつう、画質は自動、ネジまるは出す', () => {
     const s = createSettings(memoryStorage());
-    expect(s.all()).toEqual({ sound: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true });
+    expect(s.all()).toEqual({ sound: true, bgm: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true });
     expect(DEFAULTS).toEqual(s.all());
   });
 
@@ -24,7 +24,8 @@ describe('設定', () => {
     expect(s.set('speed', 'fast')).toBe(true);
     expect(s.set('quality', 'light')).toBe(true);
     expect(s.set('mascot', false)).toBe(true);
-    expect(createSettings(st).all()).toEqual({ sound: true, vibrate: false, speed: 'fast', quality: 'light', mascot: false });
+    expect(s.set('bgm', false)).toBe(true);
+    expect(createSettings(st).all()).toEqual({ sound: true, bgm: false, vibrate: false, speed: 'fast', quality: 'light', mascot: false });
   });
 
   it('知らない値は受け付けず、壊れた保存は既定に戻す', () => {
@@ -32,6 +33,7 @@ describe('設定', () => {
     const s = createSettings(st);
     expect(s.set('speed', 'warp')).toBe(false);
     expect(s.set('sound', 'yes')).toBe(false);
+    expect(s.set('bgm', 'on')).toBe(false);
     expect(s.set('nothing', true)).toBe(false);
     expect(s.all()).toEqual(DEFAULTS);
     st.setItem(SETTINGS_KEY, '{"speed":"warp","quality":"light","sound":1}');

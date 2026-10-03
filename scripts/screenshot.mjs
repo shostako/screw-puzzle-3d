@@ -981,7 +981,7 @@ async function settingsShots(context, errors, outside) {
   const normalTurn = await turnAngle();
   await openSettings();
   const shown = await page.evaluate(() => window.__app.settings.all());
-  if (JSON.stringify(shown) !== JSON.stringify({ sound: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true })) throw new Error(`設定の既定が違う: ${JSON.stringify(shown)}`);
+  if (JSON.stringify(shown) !== JSON.stringify({ sound: true, bgm: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true })) throw new Error(`設定の既定が違う: ${JSON.stringify(shown)}`);
   const card = await page.locator('#settings .card').boundingBox();
   if (card.x < 0 || card.x + card.width > VIEWPORT.width || card.y < 0 || card.y + card.height > VIEWPORT.height) throw new Error('設定の画面がはみ出す');
   await save('settings');
@@ -990,6 +990,7 @@ async function settingsShots(context, errors, outside) {
   await pick('quality', 'light');
   await pick('mascot', 'false');
   await pick('vibrate', 'false');
+  await pick('bgm', 'false');
   if (await page.evaluate(() => window.__app.pixelRatio) !== 1) throw new Error('画質「軽い」で解像度が 1 にならない');
   await closeAll();
   const fastTurn = await turnAngle();
@@ -1004,7 +1005,7 @@ async function settingsShots(context, errors, outside) {
   await page.reload();
   await waitRendered(page);
   const kept = await page.evaluate(() => window.__app.settings.all());
-  if (JSON.stringify(kept) !== JSON.stringify({ sound: true, vibrate: false, speed: 'fast', quality: 'light', mascot: false })) throw new Error(`設定が再読み込みで残らない: ${JSON.stringify(kept)}`);
+  if (JSON.stringify(kept) !== JSON.stringify({ sound: true, bgm: false, vibrate: false, speed: 'fast', quality: 'light', mascot: false })) throw new Error(`設定が再読み込みで残らない: ${JSON.stringify(kept)}`);
   if (await page.locator('#mascot').isVisible() || await page.evaluate(() => window.__app.mascotDrawing)) throw new Error('再読み込みでネジまるが戻った');
 
   // 記録を消す: ステージ 3 まで進んだ端末で、2 回押すとステージ 1 に戻る。設定は残る
