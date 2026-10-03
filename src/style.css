@@ -203,7 +203,7 @@ button {
 }
 #hint.flash { color: #d2452f; }
 
-/* 画面の右下（親指の届く所）: 向きを戻す・音と振動 */
+/* 画面の右下（親指の届く所）: ヒント・向きを戻す・音と振動 */
 #tools {
   position: fixed;
   right: calc(var(--safe-area-inset-right, env(safe-area-inset-right, 0px)) + 14px);
@@ -232,6 +232,9 @@ button {
   stroke-linejoin: round;
   stroke-linecap: round;
 }
+#undo:disabled { opacity: 0.4; }
+#hint-btn svg { stroke: var(--accent); }
+#hint-btn:disabled { opacity: 0.6; }
 #sound .mute { display: none; }
 #sound.off .wave { display: none; }
 #sound.off .mute { display: inline; }
@@ -309,7 +312,7 @@ button {
 }
 .card h2 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: 0.08em; }
 .card p { margin: 8px 0 18px; color: var(--ink-soft); font-size: 14px; }
-#again, #next {
+#again, #next, #rewind, #back1, #resume {
   display: block;
   margin: 0 auto;
   min-width: 180px;
@@ -323,9 +326,10 @@ button {
   box-shadow: 0 4px 0 #b07c00;
 }
 #overlay.cleared h2 { color: #d08a00; }
-#next[hidden] { display: none; }
+#next[hidden], #rewind[hidden], #back1[hidden], #resume[hidden] { display: none; }
+#rewind:disabled { opacity: 0.6; }
 /* 次へがあるときの「もう一度」は控えめに */
-#again.sub {
+#again.sub, #back1.sub, #resume.sub {
   margin-top: 10px;
   min-height: 40px;
   background: transparent;
@@ -334,6 +338,7 @@ button {
   font-size: 15px;
   font-weight: 400;
 }
+
 
 /* マスコット「ネジまる」（D3）。左下に立たせる。指の操作は下の盤面へ通す。
    終わりの画面（#overlay、z-index 3）より手前に出して、成功・失敗の動きが見えるようにする */
@@ -354,3 +359,30 @@ button {
   height: 194px;
   margin: -150px auto 0;
 }
+
+/* クリアの評価: 星3つ（付いた星は金色で順にはじける）と、時間・自己ベストの行 */
+#end-stars {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin: -6px 0 6px;
+  font-size: 40px;
+  line-height: 1;
+  color: #dfe4ec;
+}
+.card #end-stars[hidden], .card #end-score[hidden] { display: none; }
+#end-stars span.on {
+  color: #ffc21a;
+  text-shadow: 0 3px 0 #b07c00, 0 0 12px rgba(255, 210, 80, 0.6);
+  animation: star-pop 0.45s cubic-bezier(0.2, 1.7, 0.4, 1) both;
+}
+@keyframes star-pop { from { transform: scale(0.2) rotate(-40deg); opacity: 0; } }
+.card #end-score {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 16px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+#end-score .new-best { color: #d08a00; font-weight: 800; }
