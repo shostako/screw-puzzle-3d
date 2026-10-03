@@ -75,6 +75,8 @@
 //   resume-daily-undo.png  続きから戻した今日の1問で、保存前の手を2手戻したところ
 //   あわせて、再読み込みの後に同じ遊び方・同じ局面（外したねじ・箱・スロット）・同じ板の状態と姿勢・同じ向き・同じ時間（遊んだ秒が続く）で
 //   続くこと、続きからクリアできて保存が消えること、壊れた保存は黙って最初から始まることを確かめる
+//   （章と難しさの曲線、E8。?stage=番号 で章の頭・中ほど・大物を開く。CHAPTER=10,11 で番号を絞れる）
+//   chapter-stage<番号>.png  開いた直後（題名の下に「第N章「章の名前」 何番目/10」）
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -84,7 +86,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -366,6 +368,23 @@ const themeShots = [
 ];
 
 // ステージの進行（M7）。新しい端末（保存なし）でステージ 1 から順にクリアして進め、再読み込みで続きから始まることを確かめる
+// 章と難しさの曲線（E8）
+const CHAPTER_SHOTS = (process.env.CHAPTER ?? '10,11,20,22,30,33,40,42,50,60').split(',').map(Number);
+async function chapterShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  for (const n of CHAPTER_SHOTS) {
+    await page.goto(`${url}?stage=${n}`);
+    await waitRendered(page);
+    const file = join(outDir, `chapter-stage${n}.png`);
+    await page.screenshot({ path: file });
+    console.log(`screenshot: ${file}`);
+  }
+  await context.close();
+}
+
 async function stageShots(context, errors, outside) {
   const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -1281,6 +1300,7 @@ try {
   if (only('random')) await randomShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('settings')) await settingsShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('resume')) await resumeShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('chapter')) await chapterShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);
   if (errors.length) throw new Error(`ページでエラー: ${errors.join(' / ')}`);

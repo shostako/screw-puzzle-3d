@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  randomLevel, randomConfig, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, DAILY_DIFFICULTY,
+  randomLevel, randomConfig, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, DAILY_DIFFICULTY, RANDOM_KINDS,
   dateKey, dayIndex, isDateKey, isRandomNo, dateLabel, dailyBestKey, MAX_RANDOM,
 } from '../src/random.js';
-import { ROTATION, stageConfig } from '../src/stages.js';
+import { curveConfig } from '../src/stages.js';
 import { validateBoard, blockerFor } from '../src/board.js';
 import { safeBlocker } from '../src/safe.js';
 import { newGame, removeScrew, status, heldBy } from '../src/rules.js';
@@ -83,22 +83,21 @@ describe('おまかせ（D6）', () => {
     }
   });
 
-  it('難しさはステージの帯の設定を借りる。形は 6 種のどれかを番号で選び、偏りすぎない', () => {
+  it('難しさはステージの曲線の段を借りる。形は 12 種のどれかを番号で選び、偏りすぎない', () => {
+    expect(RANDOM_KINDS).toHaveLength(12);
     for (const d of DIFFICULTY_IDS) {
       const kinds = new Set();
-      for (let no = 1; no <= 60; no++) {
+      for (let no = 1; no <= 120; no++) {
         const c = randomConfig(no, d);
-        const band = DIFFICULTIES[d].band;
-        const k = ROTATION.indexOf(c.kind);
-        expect(k).toBeGreaterThanOrEqual(0);
-        const ref = stageConfig(band + k);
+        expect(RANDOM_KINDS).toContain(c.kind);
+        const ref = curveConfig(c.kind, DIFFICULTIES[d].step);
         expect({ ...c, want: 0, prefer: 0 }).toEqual({ ...ref, want: 0, prefer: 0 });
         kinds.add(c.kind);
       }
-      expect(kinds.size).toBe(ROTATION.length);
+      expect(kinds.size).toBe(RANDOM_KINDS.length);
     }
     const count = new Map();
-    for (let no = 1; no <= 1200; no++) {
+    for (let no = 1; no <= 2400; no++) {
       const kind = randomConfig(no, 'normal').kind;
       count.set(kind, (count.get(kind) ?? 0) + 1);
     }
@@ -108,8 +107,9 @@ describe('おまかせ（D6）', () => {
   it('難しくするほど、色・札が増え、手順で待機スロットを使う回数が増える', () => {
     const avg = (d, f) => NOS.reduce((a, no) => a + f(level(no, d)), 0) / NOS.length;
     const slots = (l) => l.meta.difficulty.slots;
-    expect(stageConfig(DIFFICULTIES.easy.band).colors).toBeLessThan(stageConfig(DIFFICULTIES.normal.band).colors);
-    expect(stageConfig(DIFFICULTIES.normal.band).colors).toBeLessThan(stageConfig(DIFFICULTIES.hard.band).colors);
+    const colors = (d) => curveConfig('box', DIFFICULTIES[d].step).colors;
+    expect(colors('easy')).toBeLessThan(colors('normal'));
+    expect(colors('normal')).toBeLessThan(colors('hard'));
     expect(avg('easy', slots)).toBeLessThan(avg('hard', slots));
     expect(avg('normal', slots)).toBeLessThanOrEqual(avg('hard', slots));
     // どの難しさも層は 2 段以上（ねじが全部見えている平たい盤面は出ない）
