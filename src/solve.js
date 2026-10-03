@@ -7,10 +7,11 @@
 //   ・待機スロットへ置く手は、次に出る箱で早く要る色から3色、各色2本まで。
 //   ・行き止まりと分かった局面は覚えておき、2度調べない。
 // 返り値: 外す順番（ねじの id の配列）/ false（手順が無い）/ null（調べる局面の数 budget を超えて打ち切り）
+// from を渡すと、その途中の局面から探す（戻る先を探すため）。省略すると始めの局面から
 
 import { newGame, removeScrew, legalMoves, checkRemove, isCleared, openBoxFor } from './rules.js';
 
-export function solve(level, isBlocked, { budget = 5000 } = {}) {
+export function solve(level, isBlocked, { budget = 5000, from = newGame(level) } = {}) {
   const colorOf = new Map(level.screws.map((s) => [s.id, s.color]));
   const plateOf = new Map(level.screws.map((s) => [s.id, s.plate]));
   const dead = new Set();
@@ -70,6 +71,6 @@ export function solve(level, isBlocked, { budget = 5000 } = {}) {
     return false;
   }
 
-  return dfs(newGame(level), []);
+  return dfs(from, []);
 }
 

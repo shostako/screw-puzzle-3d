@@ -3,7 +3,8 @@ import { createGesture } from './gesture.js';
 import { dragRotation, zoomDistance, radPerPx } from './view.js';
 import { buildBoard } from './scene.js';
 import { THEME, cssVariables } from './theme.js';
-import { createGame, hudOf, applyEvent } from './game.js';
+import { createGame, hudOf, applyEvent, rewindPoint } from './game.js';
+import { safeBlocker } from './safe.js';
 import { nearestScrew } from './pick.js';
 import { fixedBlocker, sweepHits } from './board.js';
 import { initPhysics, createPhysics, syncPlates, STEP } from './physics.js';
@@ -428,14 +429,14 @@ function sparkle(el) {
 }
 
 let flashTimer = 0;
-function say(text, warn = false) {
+function say(text, warn = false, ms = 1200) {
   hint.textContent = text;
   hint.classList.toggle('flash', warn);
   clearTimeout(flashTimer);
   flashTimer = setTimeout(() => {
     hint.textContent = '1本指で回す・ねじをタップで外す';
     hint.classList.remove('flash');
-  }, 1200);
+  }, ms);
 }
 
 // ---- 1局 ----
@@ -443,9 +444,12 @@ function say(text, warn = false) {
 // 外せるかは今の板の姿勢で調べ、詰みは動かない板だけで決める（回せばどけられる板があるうちは詰みにしない）
 let game = null;
 let colorOf = null;
+let snaps = [];      // 戻る用: 外した手ごとに、外す直前の物理の写し（game.history と同じ並び）
+let safe = null;     // 戻る先を探す安全側の隠れ判定（盤面ごとに作る。初めて要るときに）
 function newGameFor(level) {
   game = createGame(level, (id, st) => physics.blocker()(id, st), fixedBlocker(level));
   colorOf = new Map(level.screws.map((s) => [s.id, s.color]));
+  safe = null;
 }
 newGameFor(LEVEL);
 let hud = hudOf(game.state);   // いま画面に出している箱とスロット（演出の途中の様子）
@@ -529,6 +533,8 @@ function tapScrew(id) {
     setTimeout(() => slotsEl.classList.remove('warn'), 400);
     say('待機スロットがいっぱい', true);
   } else if (r.reason === 'ok') {
+    snaps.push(physics.snapshot());   // 物理はまだ外す前のまま（syncPlates の前）
+    clearMark();
     const out = unscrew(obj);
     syncPlates(physics, game.state);   // 1本になった板はぶら下がり、0本の板は落ち始める
     const fallen = r.events.filter((ev) => eventCue(ev) === 'plate');
@@ -538,6 +544,7 @@ function tapScrew(id) {
     queue.push({ events: r.events, obj, out, status: r.status });
     play();
   }
+  showUndo();
   return r.reason;
 }
 
@@ -562,9 +569,15 @@ function showEnd(status) {
   $('end-text').textContent = cleared ? 'すべての箱を埋めた' : '外せるねじが無くなった';
   const next = cleared && !freePlay;
   $('next').hidden = !next;
+  // 詰みからは、解ける所まで一気に戻すか、1手戻す
+  $('rewind').hidden = cleared;
+  $('rewind').disabled = false;
+  $('rewind').textContent = '解ける所まで戻る';
+  $('back1').hidden = cleared;
   $('again').textContent = cleared ? 'もう一度' : 'やり直す';
-  $('again').classList.toggle('sub', next);
+  $('again').classList.toggle('sub', next || !cleared);
   ov.hidden = false;
+  showUndo();
 }
 
 function showStage() {
@@ -589,32 +602,117 @@ async function nextStage() {
   restart();
   hint.textContent = '1本指で回す・ねじをタップで外す';
   loading = false;
+  showUndo();
 }
 
-function restart() {
+// 演出を捨てて盤面を作り直す
+function rebuildBoard() {
   generation++;
   queue = [];
   playing = false;
   for (const t of tweens) tweens.delete(t);
   $('flyers').replaceChildren();
+  mark = null;
   if (board) {
     model.remove(board.root);
     for (const p of board.plates.values()) if (p.parent === scene) scene.remove(p);
   }
   board = buildBoard(LEVEL);
   model.add(board.root);
+  stepClock = 0;
+}
+
+function restart() {
+  rebuildBoard();
   boardRadius = new THREE.Box3().setFromObject(board.root).getBoundingSphere(new THREE.Sphere()).radius;
   placeGround();
   physics?.free();
   physics = createPhysics(LEVEL);
-  stepClock = 0;
   game.restart();
+  snaps = [];
   syncPlates(physics, game.state);
+  showState();
+}
+
+// 今の局面（game と physics）を画面に出す。外したねじは隠し、消えた板は外し、動ける板は今の姿勢に置く
+function showState() {
+  for (const [id, s] of board.screws) s.visible = game.state.where[id] === 'board';
+  for (const [id, obj] of board.plates) if (physics.mode(id) === 'gone') board.root.remove(obj);
+  for (const [id, pose] of Object.entries(physics.poses())) {
+    const obj = board.plates.get(id);
+    obj.position.set(...pose.position);
+    obj.quaternion.set(...pose.quaternion);
+  }
   hud = hudOf(game.state);
   renderHud(hud);
   $('overlay').hidden = true;
   showStage();
+  showUndo();
   requestRender();
+}
+
+// ---- 戻る ----
+
+// k 手目を外す直前へ戻す（ルールの状態と物理の写しを一緒に）。戻した局面は、そのとき揺れていた板は揺れの途中から続く
+function rewindTo(k) {
+  if (!game.rewind(k)) return false;
+  physics.restore(snaps[k]);
+  snaps.length = k;
+  rebuildBoard();
+  showState();
+  feedback.cue('undo');
+  return true;
+}
+
+function showUndo() {
+  $('undo').disabled = loading || !game.canUndo || !$('overlay').hidden;
+}
+
+function undoOne() {
+  if (loading || !game.canUndo) return;
+  if (rewindTo(game.moves - 1)) say('1手戻した');
+}
+
+// 詰みから、解ける手順が残っている一番新しい局面へ一気に戻す。分かれ目のねじ（そこで外したために解けなくなった）に赤い輪を出す
+async function rewindToSolvable() {
+  if (loading || !game.canUndo) return;
+  const btn = $('rewind');
+  btn.disabled = true;
+  btn.textContent = '戻る先を探しています…';
+  await wait(30);   // 文字を描いてから探す
+  safe ??= safeBlocker(LEVEL);
+  const before = game.moves;
+  const { k } = rewindPoint(LEVEL, [...game.history, game.state], safe);
+  const screw = game.path[k];
+  if (!rewindTo(k)) return;
+  say(k ? `${before - k}手戻した。赤い輪のねじが分かれ目` : '最初まで戻した。赤い輪のねじが分かれ目', false, 4000);
+  showMark(screw);
+}
+
+// 分かれ目のねじの赤い輪（DOM）。描くたびにねじの画面の位置へ動かす。4 秒で消える
+let mark = null;
+function showMark(screwId) {
+  clearMark();
+  const el = document.createElement('div');
+  el.className = 'mark';
+  $('flyers').append(el);
+  mark = { el, screwId };
+  placeMark();
+  const m = mark;
+  wait(4000).then(() => { if (mark === m) clearMark(); });   // 演出の時計で（スクリーンショットが止めて撮れるように）
+}
+function placeMark() {
+  if (!mark) return;
+  const [x, y] = screenOf(board.screws.get(mark.screwId));
+  mark.el.style.left = `${x}px`;
+  mark.el.style.top = `${y}px`;
+}
+function clearMark() {
+  if (!mark) return;
+  const { el } = mark;
+  mark = null;
+  el.classList.add('out');
+  el.addEventListener('animationend', () => el.remove());
 }
 
 // ---- タップでねじを選ぶ ----
@@ -714,6 +812,9 @@ soundButton.addEventListener('click', () => {
 showSound();
 $('again').addEventListener('click', restart);
 $('next').addEventListener('click', nextStage);
+$('undo').addEventListener('click', undoOne);
+$('back1').addEventListener('click', undoOne);
+$('rewind').addEventListener('click', rewindToSolvable);
 
 // ---- 物理を進める ----
 
@@ -758,6 +859,7 @@ function frame(now) {
   if (needsRender) {
     needsRender = false;
     renderer.render(scene, camera);
+    placeMark();
     watchFrameTime(now, lastDraw);
     lastDraw = now;
   }
@@ -792,6 +894,10 @@ window.__app = {
   },
   plateModes: () => Object.fromEntries(LEVEL.plates.map((p) => [p.id, physics.mode(p.id)])),
   tapScrew,
+  undo: undoOne,
+  rewind: rewindToSolvable,
+  get moves() { return game.moves; },
+  marked: () => mark?.screwId ?? null,
   screenOf: (id) => screenOf(board.screws.get(id)),
   screwShown: (id) => board.screws.get(id).visible,
   screw: (id) => board.screws.get(id),

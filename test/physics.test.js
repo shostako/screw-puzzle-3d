@@ -287,3 +287,56 @@ describe('板の動きはいつか落ち着く（M8）', () => {
     expect(ph.moving()).toBe(true);
   });
 });
+
+describe('物理の写しと戻し（戻る）', () => {
+  // ステージ 7 を手順どおりに外しながら、途中の何か所かで写す。写した所へ戻してから同じ操作をすると、
+  // 写さずに続けたときと同じ姿勢になる（落ちきって消えた板も戻る）
+  it('写した所へ戻して同じ操作をすれば、同じ姿勢と状態になる', () => {
+    const level = stageLevel(7);
+    const path = level.meta.solution;
+    const downs = [[0, -1, 0], [1, -1, 0], [0, -1, 1], [-1, 0, 0], [0, 0, -1]];
+    // k 手目を外し、決まった重力の向きで 90 刻み進める。姿勢・状態・消えた板を記録する
+    const move = (ph, st, k) => {
+      st = take(st, path[k], ph);
+      ph.setDown(downs[k % downs.length]);
+      const gone = [];
+      for (let i = 0; i < 90; i++) gone.push(...ph.step());
+      return { st, entry: { poses: JSON.stringify(ph.poses()), modes: level.plates.map((p) => ph.mode(p.id)).join(), gone: gone.join(), moving: ph.moving() } };
+    };
+    const run = (ph, st, from) => {
+      const log = [];
+      for (let k = from; k < path.length; k++) {
+        const r = move(ph, st, k);
+        st = r.st;
+        log.push(r.entry);
+      }
+      return log;
+    };
+
+    const ph = createPhysics(level);
+    let st = newGame(level);
+    const snaps = [], states = [], full = [];
+    // 写しながら1回通す
+    for (let k = 0; k < path.length; k++) {
+      snaps.push(ph.snapshot());
+      states.push(st);
+      const r = move(ph, st, k);
+      st = r.st;
+      full.push(r.entry);
+    }
+    expect(level.plates.some((p) => ph.mode(p.id) === 'gone')).toBe(true);   // 板が消える場面を含む
+
+    // 写さずに通した記録と同じ（写すだけでは何も変わらない）
+    const plain = createPhysics(level);
+    expect(run(plain, newGame(level), 0)).toEqual(full);
+    plain.free();
+
+    // 途中の写しへ戻してから先を通すと、同じ記録になる（後ろから戻すので、消えた板も戻ってくる）
+    for (const k of [path.length - 1, Math.floor(path.length / 2), 3, 0]) {
+      ph.restore(snaps[k]);
+      expect(level.plates.map((p) => ph.mode(p.id))).toEqual(level.plates.map((p) => (snaps[k].mode.find(([id]) => id === p.id)[1])));
+      expect(run(ph, states[k], k)).toEqual(full.slice(k));
+    }
+    ph.free();
+  });
+});

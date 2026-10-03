@@ -43,7 +43,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,stage,size,fx で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ、fx は分解の演出
+// SHOTS=box,gen,stage,size,fx,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ、fx は分解の演出、undo は戻る
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -540,6 +540,89 @@ async function fxShots(context, errors, outside) {
   await context.close();
 }
 
+// 戻る。生成した箱を手順どおりに途中まで外し、右下の「1手戻す」で2手戻して外し直すと同じ局面になること、
+// わざと待機スロットへ入れて詰ませ、詰みの画面の「1手戻す」と「解ける所まで戻る」が効くことを確かめる
+async function undoShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const shoot = async (name, settle = true) => {
+    if (settle) await waitRendered(page);
+    const file = join(outDir, `${name}.png`);
+    await page.screenshot({ path: file });
+    console.log(`screenshot: ${file}`);
+  };
+  const tapButton = async (sel) => {
+    await page.waitForTimeout(300);
+    const box = await page.locator(sel).boundingBox();
+    await tap(cdp, [box.x + box.width / 2, box.y + box.height / 2]);
+  };
+  const snapshot = () => page.evaluate(() => JSON.stringify([window.__app.game.state.where, window.__app.game.state.slots, window.__app.plateModes()]));
+  const moves = () => page.evaluate(() => window.__app.moves);
+
+  await page.goto(url + '?seed=4&kind=box');
+  await waitRendered(page);
+  if (!(await page.locator('#undo').isDisabled())) throw new Error('外す前から「1手戻す」が押せる');
+  await playSolution(page, 4);
+  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+  const at2 = await snapshot();
+  await playSolution(page, 6);
+  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+  await shoot('undo-before');
+  for (let i = 0; i < 2; i++) {
+    await tapButton('#undo');
+    await waitRendered(page);
+  }
+  if ((await moves()) !== 4 || (await snapshot()) !== at2) throw new Error(`2手戻した局面が、4手目の後と違う（${await moves()} 手）`);
+  await shoot('undo-two-back');
+  await playSolution(page, 6);
+  if ((await moves()) !== 6) throw new Error('戻した後に外し直せない');
+
+  // 詰ませる。このゲームの詰みは「待機スロットが満杯で、出ている箱の色のねじが全部、動かない板に隠れている」ときだけで、
+  // 序盤のステージではまず起きない。ステージ 25 のこの順（手元で探した 9 手）なら詰む。生成器が変わったら探し直す
+  const STUCK_PATH = ['bottom-3', 'back-3', 'top-2', 'back-1', 'back-4', 'top-1', 'bottom-1', 'bottom-2', 'top-3'];
+  await page.goto(url + '?stage=25');
+  await waitRendered(page);
+  let k = 0;
+  for (const id of STUCK_PATH) {
+    for (let tries = 0; ; tries++) {
+      const reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
+      if (reason === 'ok') break;
+      if (reason !== 'blocked' || tries >= 12) throw new Error(`詰ませる手順のねじ ${id} を外せない: ${reason}`);
+      await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k++ % VIEWS.length]);
+      await waitRendered(page);
+    }
+    await waitRendered(page);
+  }
+  await page.waitForSelector('#overlay.stuck:not([hidden]) #rewind:not([hidden])');
+  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+  await shoot('undo-stuck');
+  const stuckAt = await moves();
+  const stuckState = await snapshot();
+  // 詰みの画面の「1手戻す」で遊べる局面に戻り、同じねじを外せばまた同じ詰みになる
+  const last = await page.evaluate(() => window.__app.game.path.at(-1));
+  await tapButton('#back1');
+  await waitRendered(page);
+  if ((await moves()) !== stuckAt - 1 || await page.evaluate(() => window.__app.game.status) !== 'playing' || !(await page.locator('#overlay').isHidden())) throw new Error('詰みから1手戻せない');
+  await page.evaluate((id) => window.__app.tapScrew(id), last);
+  await waitRendered(page);
+  if ((await snapshot()) !== stuckState) throw new Error('外し直した詰みが前と違う');
+  // 「解ける所まで戻る」。分かれ目の赤い輪を撮るため、演出の時計を止めてから押す
+  await page.waitForSelector('#overlay.stuck:not([hidden]) #rewind:not([hidden])');
+  await tapButton('#rewind');
+  await page.waitForFunction(() => window.__app.marked() !== null);
+  await page.evaluate(() => window.__app.timeScale(0));
+  await waitRendered(page);
+  const back = await moves();
+  if (!(back < stuckAt - 1) || await page.evaluate(() => window.__app.game.status) !== 'playing') throw new Error(`解ける所まで戻れない（${stuckAt} → ${back} 手）`);
+  console.log(`解ける所まで戻る: ${stuckAt} 手 → ${back} 手、分かれ目 ${await page.evaluate(() => window.__app.marked())}`);
+  await shoot('undo-rewound');
+  await page.evaluate(() => window.__app.timeScale(1));
+  await context.close();
+}
+
 const server = await serve();
 const url = `http://127.0.0.1:${server.address().port}/`;
 const browser = await chromium.launch({
@@ -582,6 +665,7 @@ try {
   await context.close();
   if (only('fx')) await fxShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('size')) await sizeShots(browser, errors, outside);
+  if (only('undo')) await undoShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);
   if (errors.length) throw new Error(`ページでエラー: ${errors.join(' / ')}`);

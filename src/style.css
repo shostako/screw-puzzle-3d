@@ -232,6 +232,7 @@ button {
   stroke-linejoin: round;
   stroke-linecap: round;
 }
+#tools button:disabled { opacity: 0.4; }
 #sound .mute { display: none; }
 #sound.off .wave { display: none; }
 #sound.off .mute { display: inline; }
@@ -309,7 +310,7 @@ button {
 }
 .card h2 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: 0.08em; }
 .card p { margin: 8px 0 18px; color: var(--ink-soft); font-size: 14px; }
-#again, #next {
+#again, #next, #rewind, #back1 {
   display: block;
   margin: 0 auto;
   min-width: 180px;
@@ -323,9 +324,10 @@ button {
   box-shadow: 0 4px 0 #b07c00;
 }
 #overlay.cleared h2 { color: #d08a00; }
-#next[hidden] { display: none; }
+#next[hidden], #rewind[hidden], #back1[hidden] { display: none; }
+#rewind:disabled { opacity: 0.6; }
 /* 次へがあるときの「もう一度」は控えめに */
-#again.sub {
+#again.sub, #back1.sub {
   margin-top: 10px;
   min-height: 40px;
   background: transparent;
@@ -334,3 +336,23 @@ button {
   font-size: 15px;
   font-weight: 400;
 }
+
+/* 戻る先へ戻したとき、分かれ目になったねじ（そこで外したために解けなくなった）に出す赤い輪。立体を回すと付いてくる */
+.mark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 46px;
+  height: 46px;
+  margin: -23px 0 0 -23px;
+  border-radius: 50%;
+  border: 4px solid #e2412b;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85), inset 0 0 0 2px rgba(255, 255, 255, 0.85);
+  animation: mark 0.9s ease-in-out infinite alternate;
+}
+.mark.out { animation: markOut 0.4s ease-in forwards; }
+@keyframes mark {
+  from { scale: 0.9; }
+  to { scale: 1.15; }
+}
+@keyframes markOut { to { scale: 1.4; opacity: 0; } }

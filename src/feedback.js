@@ -12,6 +12,7 @@
 //   plate    板が外れて落ち始めた
 //   cleared  クリア
 //   stuck    詰み
+//   undo     戻した（1手戻す・解ける所まで戻る）
 
 export const SETTING_KEY = 'screw-puzzle-3d.sound';
 
@@ -48,6 +49,7 @@ export const VIBRATION = {
   plate: [20],
   cleared: [30, 60, 30, 60, 80],
   stuck: [120],
+  undo: [10, 30, 10],
 };
 
 // 音の型: 音を順に並べたもの。{ at: 始まり（秒）, f: 周波数（Hz）, to: 終わりの周波数, d: 長さ（秒）, wave, gain, noise }
@@ -61,6 +63,7 @@ export const SOUNDS = {
   boxFull: [{ at: 0, f: 784, d: 0.12, wave: 'triangle', gain: 0.16 }, { at: 0.09, f: 1175, d: 0.2, wave: 'triangle', gain: 0.16 }],
   plate: [{ at: 0, f: 200, to: 90, d: 0.25, wave: 'triangle', gain: 0.16 }],
   cleared: [523, 659, 784, 1047].map((f, i) => ({ at: i * 0.11, f, d: i === 3 ? 0.45 : 0.14, wave: 'triangle', gain: 0.16 })),
+  undo: [{ at: 0, f: 520, to: 700, d: 0.06, wave: 'sine', gain: 0.16 }, { at: 0.07, f: 700, to: 440, d: 0.08, wave: 'sine', gain: 0.14 }],
   stuck: [{ at: 0, f: 330, to: 300, d: 0.22, wave: 'sine', gain: 0.16 }, { at: 0.22, f: 262, to: 220, d: 0.4, wave: 'sine', gain: 0.16 }],
 };
 

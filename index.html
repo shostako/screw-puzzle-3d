@@ -21,6 +21,9 @@
   <p id="hint">1本指で回す・ねじをタップで外す</p>
 </header>
 <nav id="tools">
+  <button id="undo" type="button" aria-label="1手戻す" title="1手戻す" disabled>
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+  </button>
   <button id="home" type="button" aria-label="向きを戻す" title="向きを戻す">
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 7.5v9L12 21l8-4.5v-9L12 3Zm0 0v0M4 7.5l8 4.5 8-4.5M12 12v9"/></svg>
   </button>
@@ -34,6 +37,8 @@
     <h2 id="end-title"></h2>
     <p id="end-text"></p>
     <button id="next" type="button" hidden>次のステージへ</button>
+    <button id="rewind" type="button" hidden>解ける所まで戻る</button>
+    <button id="back1" class="sub" type="button" hidden>1手戻す</button>
     <button id="again" type="button">もう一度</button>
   </div>
 </div>
