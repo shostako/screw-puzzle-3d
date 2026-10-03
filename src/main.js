@@ -6,18 +6,32 @@ import { createGame, hudOf, applyEvent } from './game.js';
 import { nearestScrew } from './pick.js';
 import { fixedBlocker, sweepHits } from './board.js';
 import { initPhysics, createPhysics, syncPlates, STEP } from './physics.js';
-import { BOX_LEVEL } from './levels/box.js';
 import { generateLevel, KINDS } from './generator.js';
+import { BOX_LEVEL } from './levels/box.js';
+import { stageLevel, START_VIEW as START_EULER } from './stages.js';
+import { createProgress, deviceStorage } from './progress.js';
 
-// ?seed=番号（と &kind=box|shelf|table）で生成した盤面を遊べる。無ければ固定の箱（M7 でステージの進行に置き換える）
-function levelFromUrl() {
-  const q = new URLSearchParams(window.location.search);
-  const seed = Number.parseInt(q.get('seed') ?? '', 10);
-  if (!Number.isFinite(seed)) return BOX_LEVEL;
-  const kind = q.get('kind');
-  return generateLevel(seed, KINDS.includes(kind) ? { kind } : {});
+// 既定はステージの進行（到達したステージから始める）。
+// ?seed=番号（と &kind=box|shelf|table）なら生成した盤面を1つだけ遊ぶ（進行は保存しない）。
+// ?level=box なら M3 の固定の箱（物理の確かめ用。進行は保存しない）。
+// ?stage=番号 ならそのステージから（確かめ用。クリアすれば進行は保存する）
+const query = new URLSearchParams(window.location.search);
+const freeSeed = Number.parseInt(query.get('seed') ?? '', 10);
+const fixedBox = query.get('level') === 'box';
+const freePlay = fixedBox || Number.isFinite(freeSeed);
+const progress = createProgress(freePlay ? null : deviceStorage());
+const askedStage = Number.parseInt(query.get('stage') ?? '', 10);
+let stage = Number.isInteger(askedStage) && askedStage >= 1 ? askedStage : progress.stage;
+
+function levelFor() {
+  if (fixedBox) return BOX_LEVEL;
+  if (freePlay) {
+    const kind = query.get('kind');
+    return generateLevel(freeSeed, KINDS.includes(kind) ? { kind } : {});
+  }
+  return stageLevel(stage);
 }
-const LEVEL = levelFromUrl();
+let LEVEL = levelFor();
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('stage');
@@ -33,7 +47,8 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
 // 盤面（外寸 6 の箱）が縦画面の横幅に収まる距離
 const ZOOM = { min: 12, max: 34 };
-let distance = 19;
+const START_DISTANCE = 19;
+let distance = START_DISTANCE;
 camera.position.set(0, 0, distance);
 
 scene.add(new THREE.HemisphereLight(0xfff8ee, 0x8a7a66, 1.5));
@@ -43,8 +58,9 @@ scene.add(sun);
 
 // 立体はこの group ごと回す。盤面は中に作り直す（やり直し）
 const model = new THREE.Group();
-// 最初は斜め上から見た向きにして、立体だと分かるようにする
-model.quaternion.setFromEuler(new THREE.Euler(0.45, -0.6, 0));
+// 最初は斜め上から見た向きにして、立体だと分かるようにする（ステージが変わるたびにこの向きへ戻す）
+const START_VIEW = new THREE.Euler(...START_EULER);
+model.quaternion.setFromEuler(START_VIEW);
 scene.add(model);
 
 let board = null;
@@ -219,8 +235,13 @@ function say(text, warn = false) {
 // ---- 1局 ----
 
 // 外せるかは今の板の姿勢で調べ、詰みは動かない板だけで決める（回せばどけられる板があるうちは詰みにしない）
-const game = createGame(LEVEL, (id, st) => physics.blocker()(id, st), fixedBlocker(LEVEL));
-const colorOf = new Map(LEVEL.screws.map((s) => [s.id, s.color]));
+let game = null;
+let colorOf = null;
+function newGameFor(level) {
+  game = createGame(level, (id, st) => physics.blocker()(id, st), fixedBlocker(level));
+  colorOf = new Map(level.screws.map((s) => [s.id, s.color]));
+}
+newGameFor(LEVEL);
 let hud = hudOf(game.state);   // いま画面に出している箱とスロット（演出の途中の様子）
 let queue = [];                // まだ見せていない出来事のまとまり { events, from: [x, y], status }
 let playing = false;
@@ -307,9 +328,39 @@ function movableBlockers(id) {
 function showEnd(status) {
   const ov = $('overlay');
   ov.className = status;
-  $('end-title').textContent = status === 'cleared' ? 'クリア！' : '詰み';
-  $('end-text').textContent = status === 'cleared' ? 'すべての箱を埋めた' : '外せるねじが無くなった';
+  const cleared = status === 'cleared';
+  // クリアしたらその場で次のステージを保存する（ボタンを押す前に閉じても、次は続きから）
+  if (cleared && !freePlay) progress.cleared(stage);
+  $('end-title').textContent = cleared ? (freePlay ? 'クリア！' : `ステージ ${stage} クリア！`) : '詰み';
+  $('end-text').textContent = cleared ? 'すべての箱を埋めた' : '外せるねじが無くなった';
+  const next = cleared && !freePlay;
+  $('next').hidden = !next;
+  $('again').textContent = cleared ? 'もう一度' : 'やり直す';
+  $('again').classList.toggle('sub', next);
   ov.hidden = false;
+}
+
+function showStage() {
+  $('title').textContent = fixedBox ? '固定の箱' : freePlay ? `シード ${freeSeed}` : `ステージ ${stage}`;
+}
+
+// 次のステージへ。盤面の生成に少しかかるので、先に表示を切り替えてから作る
+let loading = false;
+async function nextStage() {
+  if (loading) return;
+  loading = true;
+  stage++;
+  $('overlay').hidden = true;
+  showStage();
+  hint.textContent = `ステージ ${stage} を組み立て中…`;
+  await wait(30);
+  LEVEL = levelFor();
+  newGameFor(LEVEL);
+  model.quaternion.setFromEuler(START_VIEW);
+  zoomBy(distance / START_DISTANCE);
+  restart();
+  hint.textContent = '1本指で回す・ねじをタップで外す';
+  loading = false;
 }
 
 function restart() {
@@ -332,6 +383,7 @@ function restart() {
   hud = hudOf(game.state);
   renderHud(hud);
   $('overlay').hidden = true;
+  showStage();
   requestRender();
 }
 
@@ -414,6 +466,7 @@ canvas.addEventListener('wheel', (e) => {
 
 $('restart').addEventListener('click', restart);
 $('again').addEventListener('click', restart);
+$('next').addEventListener('click', nextStage);
 
 // ---- 物理を進める ----
 
@@ -472,8 +525,11 @@ start();
 window.__app = {
   model,
   camera,
-  game,
-  get rendered() { return !needsRender && !tweens.size && !playing && !physics?.moving(); },
+  get game() { return game; },
+  get stage() { return freePlay ? null : stage; },
+  get rendered() { return !loading && !needsRender && !tweens.size && !playing && !physics?.moving(); },
+  // rendered が false の理由（スクリーンショットのスクリプトが待ちきれなかったとき用）
+  why: () => ({ loading, needsRender, tweens: tweens.size, playing, moving: physics?.moving(), modes: window.__app.plateModes() }),
   // 立体の向きを Euler で直接決める（スクリーンショットで同じ向きから撮るため）
   view(x, y, z, d = distance) {
     model.rotation.set(x, y, z);
@@ -484,6 +540,7 @@ window.__app = {
   screenOf: (id) => screenOf(board.screws.get(id)),
   visibleScrews,
   legal: () => game.legal(),
-  // 生成した盤面の、解ける手順（固定の箱には無い）
-  solution: LEVEL.meta?.solution ?? null,
+  // 生成した盤面の、解ける手順
+  get solution() { return LEVEL.meta?.solution ?? null; },
+  get level() { return LEVEL.meta; },
 };

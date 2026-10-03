@@ -187,8 +187,10 @@ button {
 }
 .card h2 { margin: 0; font-size: 28px; letter-spacing: 0.08em; }
 .card p { margin: 8px 0 18px; color: var(--ink-soft); font-size: 14px; }
-#again {
-  min-width: 160px;
+#again, #next {
+  display: block;
+  margin: 0 auto;
+  min-width: 180px;
   min-height: 48px;
   border: none;
   border-radius: 24px;
@@ -198,3 +200,13 @@ button {
   font-weight: 700;
 }
 #overlay.cleared h2 { color: #c2562f; }
+#next[hidden] { display: none; }
+/* 次へがあるときの「もう一度」は控えめに */
+#again.sub {
+  margin-top: 10px;
+  min-height: 40px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 15px;
+  font-weight: 400;
+}

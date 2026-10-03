@@ -4,6 +4,7 @@
 // ブラウザは PLAYWRIGHT_CHROMIUM か /opt/pw-browsers の Chromium を使い、無ければ playwright-core の既定を探す。
 //
 // 撮るもの:
+//   （固定の箱 ?level=box で）
 //   initial.png  開いた直後
 //   removed.png  ねじを指でタップして2本外した後（箱とスロットへ）
 //   resting.png  札のねじを外し、落ちた札が天板の上で止まってねじを隠し続けるところ
@@ -12,7 +13,14 @@
 //   cleared.png  全部外してクリアの画面
 //   gen-box.png / gen-shelf.png / gen-table.png  生成した盤面（?seed=番号&kind=種類）を開いた直後（M6）
 //   gen-midway.png / gen-cleared.png  生成した箱の盤面を、生成器が見つけた手順どおりに外していく途中と、クリアの画面
-// 以後の PR では、このファイルの shots に場面を足して使い回す。
+//   （ステージの進行、M7。保存の無い新しい端末として開く）
+//   stage1.png          初めて開いた直後（ステージ 1）
+//   stage1-turned.png   ステージ 1 で見えている面のねじを外し、立体を回して裏のねじを見せたところ
+//   stage1-cleared.png  ステージ 1 のクリア画面（次のステージへ）
+//   stage2.png / stage3.png  「次のステージへ」を指でタップして進んだ直後
+//   stage4-resumed.png  ステージ 3 までクリアしてから再読み込みした直後（続きのステージ 4 から始まる）
+//   stage5.png / stage6.png / stage20.png  先のステージ（?stage=番号）を開いた直後
+// SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
 import { existsSync, readdirSync } from 'node:fs';
@@ -21,6 +29,8 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
+// SHOTS=box,gen,stage で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行
+const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
 const VIEWPORT = { width: 390, height: 844 };
@@ -55,8 +65,18 @@ function findChromium() {
   return undefined;
 }
 
+// 物理の板が落ち着かないまま、この時間を過ぎたら先へ進む（ほかの理由で待ちきれないときは失敗にする）。
+// 解いた後の札がぶら下がったまま、その上に落ちた板と触れ合い続けて止まらないことがある（M8 で直す。ROADMAP の M7）
+const SETTLE_MS = 15000;
 async function waitRendered(page) {
-  await page.waitForFunction(() => window.__app?.rendered);
+  try {
+    await page.waitForFunction(() => window.__app?.rendered, null, { timeout: SETTLE_MS });
+  } catch (e) {
+    const why = await page.evaluate(() => window.__app?.why?.()).catch(() => null);
+    const onlyMoving = why && why.moving && !why.loading && !why.tweens && !why.playing;
+    if (!onlyMoving) throw new Error(`描画が落ち着かない: ${JSON.stringify(why)}`, { cause: e });
+    console.warn(`warning: 板が落ち着かないまま進む: ${JSON.stringify(why.modes)}`);
+  }
   // 描いた後の1フレームを待ってから撮る
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 }
@@ -173,6 +193,8 @@ async function playSolution(page, until = Infinity) {
     for (let tries = 0; ; tries++) {
       const reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
       if (reason === 'ok' || reason === 'gone') break;
+      // 手順の外の順で先に外していれば、手順の途中でクリアになっている
+      if (reason === 'over' && await page.evaluate(() => window.__app.game.status) === 'cleared') return path.length;
       if (reason !== 'blocked' || tries >= 12) throw new Error(`手順のねじ ${id} を外せない: ${reason}`);
       await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k++ % VIEWS.length]);
       await waitRendered(page);
@@ -195,6 +217,76 @@ const genShots = [
   } },
 ];
 
+// ステージの進行（M7）。新しい端末（保存なし）でステージ 1 から順にクリアして進め、再読み込みで続きから始まることを確かめる
+async function stageShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const shoot = async (name) => {
+    await waitRendered(page);
+    const file = join(outDir, `${name}.png`);
+    await page.screenshot({ path: file });
+    console.log(`screenshot: ${file}`);
+  };
+  const expectStage = async (n) => {
+    const [stage, title] = await page.evaluate(() => [window.__app.stage, document.getElementById('title').textContent]);
+    if (stage !== n || title !== `ステージ ${n}`) throw new Error(`ステージ ${n} のはずが ${stage}（${title}）`);
+  };
+  const tapButton = async (sel) => {
+    const box = await page.locator(sel).boundingBox();
+    await tap(cdp, [box.x + box.width / 2, box.y + box.height / 2]);
+  };
+
+  await page.goto(url);
+  await waitRendered(page);
+  await expectStage(1);
+  await shoot('stage1');
+  // 最初の向きで外せる（見えている）ねじを外し切ったら、回して裏を見せる
+  for (;;) {
+    const [id] = await page.evaluate(() => {
+      const seen = new Set(window.__app.visibleScrews().map((s) => s.id));
+      return window.__app.legal().filter((id) => seen.has(id));
+    });
+    if (!id) break;
+    await tap(cdp, await page.evaluate((id) => window.__app.screenOf(id), id));
+    await waitRendered(page);
+  }
+  const left = await page.evaluate(() => window.__app.legal().length);
+  if (!left) throw new Error('ステージ 1 で、見えない面に残るねじが無い');
+  await drag(cdp, [195, 600], [195 - 170, 600 - 40]);
+  await drag(cdp, [195, 600], [195 - 90, 600 - 110]);
+  await shoot('stage1-turned');
+  await playSolution(page);
+  await page.waitForSelector('#overlay:not([hidden]) #next:not([hidden])');
+  await shoot('stage1-cleared');
+  for (const n of [2, 3]) {
+    await tapButton('#next');
+    await page.waitForFunction((n) => window.__app.stage === n && window.__app.rendered, n);
+    await expectStage(n);
+    await shoot(`stage${n}`);
+    await playSolution(page);
+    await page.waitForSelector('#overlay:not([hidden]) #next:not([hidden])');
+  }
+  // 「次へ」を押さずに再読み込みしても、続きのステージ 4 から始まる
+  await page.reload();
+  await waitRendered(page);
+  await expectStage(4);
+  await shoot('stage4-resumed');
+  for (const n of [5, 6, 20]) {
+    await page.goto(url + `?stage=${n}`);
+    await waitRendered(page);
+    await expectStage(n);
+    await shoot(`stage${n}`);
+  }
+  // 見るだけ（?stage=）では到達は進まない
+  await page.goto(url);
+  await waitRendered(page);
+  await expectStage(4);
+  await context.close();
+}
+
 const server = await serve();
 const url = `http://127.0.0.1:${server.address().port}/`;
 const browser = await chromium.launch({
@@ -212,18 +304,18 @@ try {
   const outside = [];
   page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
 
-  await page.goto(url);
+  await page.goto(url + '?level=box');
   await waitRendered(page);
   const cdp = await context.newCDPSession(page);
   await mkdir(outDir, { recursive: true });
-  for (const s of shots) {
+  for (const s of only('box') ? shots : []) {
     await s.act(cdp, page);
     if (s.wait !== false) await waitRendered(page);
     const file = join(outDir, `${s.name}.png`);
     await page.screenshot({ path: file });
     console.log(`screenshot: ${file}`);
   }
-  for (const s of genShots) {
+  for (const s of only('gen') ? genShots : []) {
     if (s.query) {
       await page.goto(url + s.query);
       await waitRendered(page);
@@ -234,6 +326,8 @@ try {
     await page.screenshot({ path: file });
     console.log(`screenshot: ${file}`);
   }
+  await context.close();
+  if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);
   if (errors.length) throw new Error(`ページでエラー: ${errors.join(' / ')}`);
 } finally {
