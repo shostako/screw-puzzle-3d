@@ -12,7 +12,7 @@ import { fixedBlocker, sweepHits } from './board.js';
 import { initPhysics, createPhysics, syncPlates, STEP } from './physics.js';
 import { generateLevel, ALL_KINDS } from './generator.js';
 import { BOX_LEVEL } from './levels/box.js';
-import { stageLevel, START_VIEW as START_EULER } from './stages.js';
+import { stageLevel, chapterOf, START_VIEW as START_EULER } from './stages.js';
 import { createProgress, deviceStorage } from './progress.js';
 import { createSettings, clearRecords, SPEEDS, QUALITIES } from './settings.js';
 import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, MAX_RANDOM, isRandomNo, dateKey, isDateKey, dateLabel, dailyBestKey } from './random.js';
@@ -738,7 +738,9 @@ function modeTitle(m = mode) {
   if (freePlay) return [`シード ${freeSeed}`, ''];
   if (m.type === 'daily') return ['今日の1問', dateLabel(m.key)];
   if (m.type === 'random') return [`おまかせ・${DIFFICULTIES[m.difficulty].label}`, `#${m.no}`];
-  return [`ステージ ${stage}`, ''];
+  // 章（E8）と、章の中の何番目か
+  const ch = chapterOf(stage);
+  return [`ステージ ${stage}`, `第${ch.no}章「${ch.title}」 ${ch.pos}/${ch.last - ch.first + 1}`];
 }
 function showStage() {
   const [title, sub] = modeTitle();
@@ -758,7 +760,7 @@ async function loadMode(next) {
   $('menu').hidden = true;
   showStage();
   playClock.pause();
-  hint.textContent = `${modeTitle().join(' ').trim()} を組み立て中…`;
+  hint.textContent = `${mode.type === 'stage' ? modeTitle()[0] : modeTitle().join(' ').trim()} を組み立て中…`;
   await wait(30);
   LEVEL = levelFor();
   newGameFor(LEVEL);
