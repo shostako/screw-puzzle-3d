@@ -319,6 +319,18 @@ export function syncPlates(ph, st) {
   return changed;
 }
 
+// 動ける板が落ち着くまで（または maxSteps 刻み）進める。落ちきった板は消える。進めた刻みの数を返す。
+// 物理の写しが無いとき（続きから戻した局面で、戻る先の写しを保存していない手など）に、ルールの状態と重力の向きから
+// それらしい姿勢を作るのに使う（写しから戻すのと浮動小数まで同じにはならない）
+export function settle(ph, maxSteps = 1200) {
+  let n = 0;
+  while ((n < 10 || ph.moving()) && n < maxSteps) {
+    ph.step();
+    n++;
+  }
+  return n;
+}
+
 // 姿勢の四元数で、板の局所の点を盤面の座標へ（テストと描画の確かめ用）
 export function poseApply(pose, local) {
   const m = quaternionMatrix(pose.quaternion);

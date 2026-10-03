@@ -38,6 +38,10 @@ export const THEME = {
     pink: '#ffadc2',
     pinkDeep: '#ff8aa8',
     spot: '#fbe9e4',
+    // E7 の題材（E2 の濃さにそろえた）
+    steel: '#b8c3d2',
+    navy: '#6f92dc',
+    red: '#ff8a78',
   },
   // 丸めた箱と円柱（D4）。板より厚いので丸みを大きくする
   block: { corner: 0.5, bevel: 0.22 },
@@ -115,6 +119,12 @@ export const THEME = {
     car: ['#7fd0ee', '#e2f6fb', '#fff0cf', '#f5f9fb'],     // 晴れた道: 青緑の空、日なたの下
     house: ['#a9b9ff', '#eeeefe', '#ffe6cf', '#f8f6fb'],   // 夕方の住宅地: 藤色の空、橙の下
     animal: ['#93d6ff', '#e8f8ee', '#eef5cf', '#f6faf2'],  // 牧場: 空色、若草の下
+    robot: ['#9fb8d8', '#e8eef6', '#f4ead8', '#f5f7fa'],   // 工作室: 鋼の青灰、木の作業台の下
+    plane: ['#6fc0ff', '#dcf0ff', '#ffffff', '#f4f9fd'],   // 高い空: 濃い空色から白い雲
+    ship: ['#8fd4f0', '#e4f7fb', '#c9ecf0', '#f3fafb'],    // 海: 空色、水色の下
+    rocket: ['#8f9ee8', '#e6e6fb', '#ffe2d0', '#f7f6fb'],  // 夜明けの発射台: 藍から朝焼け
+    train: ['#a3d8ff', '#eef8ec', '#f6efcf', '#f8f9f2'],   // 田舎の線路: 空色、麦色の下
+    camera: ['#f3c6d6', '#fbeff3', '#fff1de', '#fbf8f8'],  // 写真館: 薄紅の幕、明るい床
   },
 
   // HUD

@@ -62,10 +62,11 @@ export function plateFrame(plate, pose = plate) {
 }
 
 // 板の頂点（世界座標）。shrink だけ内側へ縮める（面内は輪郭の各辺を shrink だけ内側へ平行に動かし、厚みは両面から）。
-// 辺ごとに同じ幅で縮めるので、細長い板でも短い向きが縮み足りないことがない
+// 辺ごとに同じ幅で縮めるので、細長い板でも短い向きが縮み足りないことがない。
+// shrink が負なら同じ幅だけ広げる（部品どうしが横の面で触れているかをテストで調べるため）
 export function plateVertices(plate, pose = plate, shrink = 0) {
   const { center, u, v, n } = plateFrame(plate, pose);
-  const ol = shrink > 0 ? insetOutline(outlineOf(plate), shrink) : outlineOf(plate);
+  const ol = shrink ? insetOutline(outlineOf(plate), shrink) : outlineOf(plate);
   const half = plate.thickness / 2 - shrink;
   const out = [];
   for (const [x, y] of ol) {
