@@ -13,4 +13,6 @@ if [ -f package.json ]; then
 fi
 
 bash scripts/build.sh
+# dist/ が外部 URL から読み込んでいないか（ネット無しの Android アプリでも動くように）
+node scripts/check-dist.mjs
 echo "ci: ok"
