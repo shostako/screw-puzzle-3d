@@ -48,6 +48,7 @@ export const VIBRATION = {
   plate: [20],
   cleared: [30, 60, 30, 60, 80],
   stuck: [120],
+  hint: [10],
 };
 
 // 音の型: 音を順に並べたもの。{ at: 始まり（秒）, f: 周波数（Hz）, to: 終わりの周波数, d: 長さ（秒）, wave, gain, noise }
@@ -61,6 +62,7 @@ export const SOUNDS = {
   boxFull: [{ at: 0, f: 784, d: 0.12, wave: 'triangle', gain: 0.16 }, { at: 0.09, f: 1175, d: 0.2, wave: 'triangle', gain: 0.16 }],
   plate: [{ at: 0, f: 200, to: 90, d: 0.25, wave: 'triangle', gain: 0.16 }],
   cleared: [523, 659, 784, 1047].map((f, i) => ({ at: i * 0.11, f, d: i === 3 ? 0.45 : 0.14, wave: 'triangle', gain: 0.16 })),
+  hint: [1319, 1760].map((f, i) => ({ at: i * 0.08, f, d: 0.16, wave: 'sine', gain: 0.14 })),
   stuck: [{ at: 0, f: 330, to: 300, d: 0.22, wave: 'sine', gain: 0.16 }, { at: 0.22, f: 262, to: 220, d: 0.4, wave: 'sine', gain: 0.16 }],
 };
 

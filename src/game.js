@@ -3,18 +3,25 @@
 
 import { newGame, removeScrew, status, screwById, legalMoves, SLOT_COUNT } from './rules.js';
 import { blockerFor } from './board.js';
+import { safeBlocker } from './safe.js';
+import { findHint } from './hint.js';
 
 // 1局。tap(id) は { reason, events, status } を返す。
 //   reason: 'ok' | 'blocked'（隠れている）| 'full'（入れる所が無い）| 'gone' | 'over'（クリアか詰みの後）
 // isBlocked はタップしたねじを外せるかの判定（物理があれば今の姿勢で調べる physics.blocker()）。
 // stuckBlocker は詰みを決める判定。物理で動く板がある間は、回せば外せるようになるかもしれないので、
 // 動かない板だけで判定する楽観的なもの（board.js の fixedBlocker）を渡す。省略すると isBlocked と同じ。
+// hint(prefer) は今の局面から解ける手順の最初のねじを返し（hint.js の findHint）、使った回数 hints を数える（クリアの評価で使う）。
+// prefer（画面で見えているねじ）から選べればそちらを優先する。探索の隠れ判定は安全側の見積もり（safe.js）。初めて使うときに作る
 export function createGame(level, isBlocked = blockerFor(level), stuckBlocker = isBlocked) {
   let state = newGame(level);
   let current = status(state, stuckBlocker);
+  let hints = 0;
+  let safe = null;
   return {
     get state() { return state; },
     get status() { return current; },
+    get hints() { return hints; },
     tap(id) {
       if (current !== 'playing') return { reason: 'over', events: [], status: current };
       const r = removeScrew(state, id, isBlocked);
@@ -26,8 +33,16 @@ export function createGame(level, isBlocked = blockerFor(level), stuckBlocker = 
     },
     // 今外せるねじの id
     legal() { return legalMoves(state, isBlocked); },
+    hint(prefer = []) {
+      if (current !== 'playing') return { screw: null, reason: 'over' };
+      safe ??= safeBlocker(level);
+      const r = findHint(level, state, safe, { prefer });
+      if (r.screw) hints++;
+      return r;
+    },
     restart() {
       state = newGame(level);
+      hints = 0;
       current = status(state, stuckBlocker);
     },
   };
