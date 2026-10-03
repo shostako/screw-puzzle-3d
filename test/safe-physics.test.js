@@ -84,7 +84,8 @@ describe('安全側の見積もりは物理より甘くない', () => {
   });
 
   // 題材（D4）は部品が多く1盤面が重いので、シードを絞る（手元では 1〜40 で確かめた）
-  for (const [kind, seeds] of [['box', 12], ['shelf', 12], ['table', 12], ['car', 6], ['house', 6], ['animal', 6]]) {
+  for (const [kind, seeds] of [['box', 12], ['shelf', 12], ['table', 12], ['car', 6], ['house', 6], ['animal', 6],
+    ['robot', 4], ['plane', 4], ['ship', 4], ['rocket', 4], ['train', 4], ['camera', 4]]) {
     it(`生成した盤面（${kind}）`, () => {
       for (let seed = 1; seed <= seeds; seed++) {
         const level = generateLevel(seed, { kind });
