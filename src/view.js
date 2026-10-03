@@ -40,10 +40,10 @@ export const ZOOM_RANGE = { min: 0.62, max: 1.8 };
 
 // 画面（幅 w・高さ h の CSS ピクセル）の中で立体を置く空きの四角を決める。
 // top は HUD の下端、bottom は右下のボタン列の上端。小さい画面でボタン列が高く空きが横幅より極端に低いときは、
-// 横幅の 0.8 倍の高さまでは下へ延ばす（ボタン列は右の端だけなので、球の右下の隅が少し掛かるだけ）
+// 横幅の 0.95 倍の高さまでは下へ延ばす（ボタン列は右の端だけなので、球の右下の隅が少し掛かるだけ）
 export function fitRegion(w, h, top, bottom, side = 12) {
   const width = Math.max(1, w - 2 * side);
-  const low = Math.min(h, Math.max(bottom, top + 0.8 * width));
+  const low = Math.min(h, Math.max(bottom, top + 0.95 * width));
   return { x: w / 2, y: (top + low) / 2, width, height: Math.max(1, low - top) };
 }
 

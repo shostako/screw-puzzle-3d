@@ -1024,6 +1024,9 @@ async function frameShots(browser, errors, outside) {
     await synth([target.x, target.y], [target.x, target.y], 0);
     if (await page.evaluate(() => window.__app.spinning)) throw new Error('指を置いても惰性が止まらない');
     if (await page.evaluate(() => window.__app.moves) !== before) throw new Error('惰性を止めた指でねじが外れた');
+    // 惰性で回った向きを戻してから、同じねじをタップする
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
+    await waitRendered(page);
     await synth([target.x, target.y], [target.x, target.y], 0);
     await waitRendered(page);
     if (await page.evaluate(() => window.__app.moves) !== before + 1) throw new Error('止まっている時のタップでねじが外れない');

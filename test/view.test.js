@@ -61,9 +61,9 @@ describe('構図: 盤面を空きに収める距離（E1）', () => {
     const r = fitRegion(390, 844, 200, 600);
     expect(r).toEqual({ x: 195, y: 400, width: 366, height: 400 });
   });
-  it('ボタン列が高い小さな画面では、横幅の 0.8 倍までは下へ延ばす', () => {
+  it('ボタン列が高い小さな画面では、横幅の 0.95 倍までは下へ延ばす', () => {
     const r = fitRegion(360, 640, 200, 396);
-    expect(r.height).toBeCloseTo(0.8 * 336);
+    expect(r.height).toBeCloseTo(0.95 * 336);
     expect(r.y + r.height / 2).toBeLessThanOrEqual(640);
   });
   it('収めた距離では、球の直径が空きの短い辺の FIT 割になる', () => {
