@@ -10,6 +10,8 @@
 //   hanging.png  立体を倒して札を払い落とし、天板がねじ1本でぶら下がったところ
 //   falling.png  最後のねじを外して天板が落ちていく途中
 //   cleared.png  全部外してクリアの画面
+//   gen-box.png / gen-shelf.png / gen-table.png  生成した盤面（?seed=番号&kind=種類）を開いた直後（M6）
+//   gen-midway.png / gen-cleared.png  生成した箱の盤面を、生成器が見つけた手順どおりに外していく途中と、クリアの画面
 // 以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -158,6 +160,41 @@ const shots = [
   } },
 ];
 
+// 生成した盤面（M6）。種類ごとに見栄えのよいシードを選んでいる
+const GENERATED = [['box', 4], ['shelf', 2], ['table', 3]];
+const VIEWS = [[0.45, -0.6, 0], [0, 0, Math.PI / 2], [Math.PI / 2, 0, 0], [0, 0, -Math.PI / 2], [-Math.PI / 2, 0, 0], [Math.PI, 0, 0]];
+
+// 生成器が見つけた手順どおりに外す。物理で隠れていたら（落ちた板やぶら下がった板）、立体の向きを変えてから外す
+async function playSolution(page, until = Infinity) {
+  const path = await page.evaluate(() => window.__app.solution);
+  if (!path) throw new Error('生成した盤面の手順が無い');
+  let k = 0;
+  for (const id of path.slice(0, until)) {
+    for (let tries = 0; ; tries++) {
+      const reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
+      if (reason === 'ok' || reason === 'gone') break;
+      if (reason !== 'blocked' || tries >= 12) throw new Error(`手順のねじ ${id} を外せない: ${reason}`);
+      await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k++ % VIEWS.length]);
+      await waitRendered(page);
+    }
+    await waitRendered(page);
+  }
+  return path.length;
+}
+
+const genShots = [
+  ...GENERATED.map(([kind, seed]) => ({ name: `gen-${kind}`, query: `?seed=${seed}&kind=${kind}`, act: async () => {} })),
+  { name: 'gen-midway', query: `?seed=${GENERATED[0][1]}&kind=${GENERATED[0][0]}`, act: async (cdp, page) => {
+    await playSolution(page, 8);
+    // 払い落とすために変えた向きを、最初の斜めの向きに戻して撮る
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+  } },
+  { name: 'gen-cleared', act: async (cdp, page) => {
+    await playSolution(page);   // 続きから（外したねじは 'gone' になるので、残りだけが外れる）
+    await page.waitForSelector('#overlay:not([hidden])');
+  } },
+];
+
 const server = await serve();
 const url = `http://127.0.0.1:${server.address().port}/`;
 const browser = await chromium.launch({
@@ -182,6 +219,17 @@ try {
   for (const s of shots) {
     await s.act(cdp, page);
     if (s.wait !== false) await waitRendered(page);
+    const file = join(outDir, `${s.name}.png`);
+    await page.screenshot({ path: file });
+    console.log(`screenshot: ${file}`);
+  }
+  for (const s of genShots) {
+    if (s.query) {
+      await page.goto(url + s.query);
+      await waitRendered(page);
+    }
+    await s.act(cdp, page);
+    await waitRendered(page);
     const file = join(outDir, `${s.name}.png`);
     await page.screenshot({ path: file });
     console.log(`screenshot: ${file}`);

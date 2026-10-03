@@ -7,8 +7,17 @@ import { nearestScrew } from './pick.js';
 import { fixedBlocker, sweepHits } from './board.js';
 import { initPhysics, createPhysics, syncPlates, STEP } from './physics.js';
 import { BOX_LEVEL } from './levels/box.js';
+import { generateLevel, KINDS } from './generator.js';
 
-const LEVEL = BOX_LEVEL;
+// ?seed=番号（と &kind=box|shelf|table）で生成した盤面を遊べる。無ければ固定の箱（M7 でステージの進行に置き換える）
+function levelFromUrl() {
+  const q = new URLSearchParams(window.location.search);
+  const seed = Number.parseInt(q.get('seed') ?? '', 10);
+  if (!Number.isFinite(seed)) return BOX_LEVEL;
+  const kind = q.get('kind');
+  return generateLevel(seed, KINDS.includes(kind) ? { kind } : {});
+}
+const LEVEL = levelFromUrl();
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('stage');
@@ -475,4 +484,6 @@ window.__app = {
   screenOf: (id) => screenOf(board.screws.get(id)),
   visibleScrews,
   legal: () => game.legal(),
+  // 生成した盤面の、解ける手順（固定の箱には無い）
+  solution: LEVEL.meta?.solution ?? null,
 };
