@@ -45,6 +45,10 @@
 //   rating-first.png  初めてクリアした画面（星・時間と目安。ベストは初めてなので行を出さない）
 //   rating-hint.png   「もう一度」で遊び直し、ヒントを1回使った扱いでクリアした画面（星が1つ減り、前の自己ベストを出す）
 //   あわせて、星の数が rate() の決まりどおりか、自己ベストが再読み込みの後も残るかを確かめる
+//   （ヒント。生成した箱 ?seed=4&kind=box で、右下の電球を指でタップして）
+//   hint.png          最初の局面でヒントを押し、外すねじに金色の輪が出たところ
+//   hint-midway.png   ヒントの手だけを8本外したあと、もう一度押したところ
+//   hint-cleared.png  ヒントの手だけでクリアした画面（使った回数を数えていることも確かめる）
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -54,7 +58,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,stage,size,fx,mascot,rating で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価
+// SHOTS=box,gen,stage,size,fx,mascot,rating,hint で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -551,6 +555,62 @@ async function fxShots(context, errors, outside) {
   await context.close();
 }
 
+// ヒント。電球を押して出た輪のねじを外す、を繰り返してクリアまで進める
+async function hintShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const press = async () => {
+    const box = await page.locator('#hint-btn').boundingBox();
+    await tap(cdp, [box.x + box.width / 2, box.y + box.height / 2]);
+    const id = await page.evaluate(() => window.__app.hintScrew);
+    if (!id) throw new Error(`ヒントの輪が出ない: ${await page.locator('#hint').textContent()}`);
+    return id;
+  };
+  // 輪が脈打つ途中で時計を止めて撮る（輪は5秒で消える）
+  const shoot = async (name) => {
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 400)));
+    await page.evaluate(() => window.__app.timeScale(0));
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const file = join(outDir, `${name}.png`);
+    await page.screenshot({ path: file });
+    console.log(`screenshot: ${file}`);
+    await page.evaluate(() => window.__app.timeScale(1));
+  };
+
+  await page.goto(url + '?seed=4&kind=box');
+  await waitRendered(page);
+  let used = 0, k = 0;
+  for (;;) {
+    const id = await press();
+    used++;
+    if (used === 1) await shoot('hint');
+    if (used === 9) await shoot('hint-midway');
+    for (let tries = 0; ; tries++) {
+      const reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
+      if (reason === 'ok') break;
+      // 落ちた板やぶら下がった板に隠れていれば、回して払い落としてからもう一度
+      if (reason !== 'blocked' || tries >= 12) throw new Error(`ヒントのねじ ${id} を外せない: ${reason}`);
+      await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k++ % VIEWS.length]);
+      await waitRendered(page);
+    }
+    await waitRendered(page);
+    if (await page.evaluate(() => window.__app.game.status) !== 'playing') break;
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+    await waitRendered(page);
+  }
+  const [status, hints] = await page.evaluate(() => [window.__app.game.status, window.__app.game.hints]);
+  if (status !== 'cleared') throw new Error(`ヒントどおりに外したのにクリアにならない: ${status}`);
+  if (hints !== used) throw new Error(`ヒントの回数が ${used} のはずが ${hints}`);
+  await page.waitForSelector('#overlay:not([hidden])');
+  const file = join(outDir, 'hint-cleared.png');
+  await page.screenshot({ path: file });
+  console.log(`screenshot: ${file}（ヒント ${used} 回）`);
+  await context.close();
+}
+
 // マスコット（D3）。姿勢を決め打ちして並べて撮り、実際の合図（外せない・箱が満杯・クリア）で動くことを確かめる
 const MASCOT_POSES = [['idle', 0.5], ['idle', 0.05], ['flinch', 0.12], ['joy', 0.37], ['win', 0.2], ['win', 4], ['lose', 0.2], ['lose', 2.4]];
 async function mascotShots(context, errors, outside) {
@@ -747,6 +807,7 @@ try {
   await context.close();
   if (only('mascot')) await mascotShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('fx')) await fxShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('hint')) await hintShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('size')) await sizeShots(browser, errors, outside);
   if (only('rating')) await ratingShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);

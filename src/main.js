@@ -404,14 +404,14 @@ function sparkle(el) {
 }
 
 let flashTimer = 0;
-function say(text, warn = false) {
+function say(text, warn = false, ms = 1200) {
   hint.textContent = text;
   hint.classList.toggle('flash', warn);
   clearTimeout(flashTimer);
   flashTimer = setTimeout(() => {
     hint.textContent = '1本指で回す・ねじをタップで外す';
     hint.classList.remove('flash');
-  }, 1200);
+  }, ms);
 }
 
 // ---- 1局 ----
@@ -517,6 +517,7 @@ function tapScrew(id) {
     setTimeout(() => slotsEl.classList.remove('warn'), 400);
     say('待機スロットがいっぱい', true);
   } else if (r.reason === 'ok') {
+    if (hintRing?.parent === obj) clearHintRing();
     const out = unscrew(obj);
     syncPlates(physics, game.state);   // 1本になった板はぶら下がり、0本の板は落ち始める
     const fallen = r.events.filter((ev) => eventCue(ev) === 'plate');
@@ -538,6 +539,61 @@ function movableBlockers(id) {
   const modes = hits.map((p) => physics.mode(p));
   if (!hits.length || modes.includes('fixed')) return null;
   return modes.includes('loose') ? 'loose' : 'hanging';
+}
+
+// ---- ヒント ----
+
+// 今の局面から解ける手順を探し（game.hint()）、最初に外すねじに金色の輪を5秒出す（2D 版と同じ）。
+// 輪はねじの子なので、ねじと一緒に回り、外せば一緒に消える。板の奥でも見えるよう、奥行きを無視して手前に描く
+const HINT_MS = 5000;
+let hintRing = null;
+function clearHintRing() {
+  hintRing?.removeFromParent();
+  hintRing = null;
+}
+
+function showHint() {
+  if (!$('overlay').hidden || loading) return;
+  // 見えているねじ（こちら向きで、手前の板に隠れていない）から選べればそちらを指す
+  const r = game.hint(visibleScrews().map((s) => s.id));
+  if (!r.screw) {
+    if (r.reason === 'none') say('ここから解ける手順が見つからない。やり直そう', true, 3000);
+    else if (r.reason === 'budget') say('手順を探しきれなかった', true, 3000);
+    return;
+  }
+  countHint();   // クリアの評価で星を1つ減らす
+  const id = r.screw;
+  const obj = board.screws.get(id);
+  clearHintRing();
+  const rad = obj.userData.radius;
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(rad * 1.6, rad * 0.24, 8, 40),
+    new THREE.MeshBasicMaterial({ color: THEME.hint, transparent: true, depthTest: false, depthWrite: false }),
+  );
+  ring.rotation.x = Math.PI / 2;   // 輪の面をねじの軸（+Y）に垂直に
+  ring.position.y = rad * 0.6;     // 頭の高さ
+  ring.renderOrder = 10;
+  ring.userData.hint = true;
+  obj.add(ring);
+  hintRing = ring;
+  tween(HINT_MS, (k) => {
+    if (hintRing !== ring) return;
+    const pulse = 0.5 + 0.5 * Math.sin(k * HINT_MS / 1000 * 9);
+    ring.scale.setScalar(1 + 0.18 * pulse);
+    ring.material.opacity = (0.65 + 0.35 * pulse) * Math.min(1, (1 - k) * 6);
+  }, () => {
+    if (hintRing === ring) clearHintRing();
+    ring.geometry.dispose();
+    ring.material.dispose();
+  });
+  cue('hint');
+  // 今は回して払える板に隠れているなら、先にそれを知らせる。ねじが向こう向きなら回して探すよう添える
+  const by = physics.blocker()(id, game.state) ? movableBlockers(id) : null;
+  const toward = new THREE.Vector3(0, 1, 0).transformDirection(obj.matrixWorld);
+  const facing = toward.dot(camera.position.clone().sub(obj.getWorldPosition(new THREE.Vector3()))) > 0;
+  say(by === 'loose' ? '金色の輪のねじ。先に回して落ちた板を払い落とそう'
+    : by === 'hanging' ? '金色の輪のねじ。先に回してぶら下がった板をどけよう'
+    : facing ? '金色の輪のねじを外そう' : '金色の輪のねじは向こう側。回して探そう', false, HINT_MS);
 }
 
 function showEnd(status) {
@@ -623,6 +679,7 @@ async function nextStage() {
 
 function restart() {
   generation++;
+  clearHintRing();
   queue = [];
   playing = false;
   for (const t of tweens) tweens.delete(t);
@@ -732,6 +789,7 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 $('restart').addEventListener('click', restart);
+$('hint-btn').addEventListener('click', showHint);
 $('home').addEventListener('click', goHome);
 
 // 音と振動の入り切り（端末に保存する）
@@ -866,6 +924,8 @@ window.__app = {
     force: (action, t) => mascot.force(action, t),
   },
   legal: () => game.legal(),
+  showHint,
+  get hintScrew() { return hintRing?.parent?.userData.screwId ?? null; },
   // 生成した盤面の、解ける手順
   get solution() { return LEVEL.meta?.solution ?? null; },
   get level() { return LEVEL.meta; },

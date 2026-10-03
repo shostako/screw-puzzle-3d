@@ -203,7 +203,7 @@ button {
 }
 #hint.flash { color: #d2452f; }
 
-/* 画面の右下（親指の届く所）: 向きを戻す・音と振動 */
+/* 画面の右下（親指の届く所）: ヒント・向きを戻す・音と振動 */
 #tools {
   position: fixed;
   right: calc(var(--safe-area-inset-right, env(safe-area-inset-right, 0px)) + 14px);
@@ -232,6 +232,8 @@ button {
   stroke-linejoin: round;
   stroke-linecap: round;
 }
+#hint-btn svg { stroke: var(--accent); }
+#hint-btn:disabled { opacity: 0.6; }
 #sound .mute { display: none; }
 #sound.off .wave { display: none; }
 #sound.off .mute { display: inline; }
