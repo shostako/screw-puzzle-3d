@@ -34,6 +34,13 @@
 //   fx-box.png       満杯の箱のふたが閉まり、星が散ったところ
 //   fx-drop.png      盤面の外へ落ちた板が回りながら画面の下へ消えていくところ
 //   あわせて、演出の後に立体の描く物の数が増えていない（板が消えた分だけ減る）ことを確かめる
+//   （マスコット、D3。生成した箱 ?seed=4&kind=box で）
+//   mascot-start.png    開いた直後（左下で待機しているネジまる）
+//   mascot-poses.png    動きごとの姿勢を並べたもの（待機・瞬き・外せない・箱が満杯・成功の回転ジャンプ・成功の後・失敗の震え・失敗の後）
+//   mascot-cleared.png  手順どおりに外してクリアした画面（ネジまるがカードに乗って、跳び終えてバンザイ）
+//   mascot-stuck.png    詰みの画面の見た目（失敗の姿勢を決め打ち。詰みの局面は作らずに、カードの文字だけ替える）
+//   あわせて、隠れたねじのタップで「外せない」、箱が満杯で「小さな喜び」、クリアで「成功」の動きが出ること、
+//   やり直すと待機に戻ること、ネジまるのキャンバスが盤面のタップを遮らないことを確かめる
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -43,7 +50,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,stage,size,fx で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ、fx は分解の演出
+// SHOTS=box,gen,stage,size,fx,mascot で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -540,6 +547,101 @@ async function fxShots(context, errors, outside) {
   await context.close();
 }
 
+// マスコット（D3）。姿勢を決め打ちして並べて撮り、実際の合図（外せない・箱が満杯・クリア）で動くことを確かめる
+const MASCOT_POSES = [['idle', 0.5], ['idle', 0.05], ['flinch', 0.12], ['joy', 0.37], ['win', 0.2], ['win', 4], ['lose', 0.2], ['lose', 2.4]];
+async function mascotShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const save = async (name, clip) => {
+    const path = join(outDir, `${name}.png`);
+    await page.screenshot({ path, clip });
+    console.log(`screenshot: ${path}`);
+  };
+  const history = () => page.evaluate(() => [...window.__app.mascot.history]);
+  const nextFrames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await page.goto(url + '?seed=4&kind=box');
+  await waitRendered(page);
+  await nextFrames();
+  await save('mascot-start');
+
+  // ネジまるのキャンバスの上をタップしても、下の盤面へ届く（pointer-events: none）
+  const box = await page.locator('#mascot').boundingBox();
+  const hit = await page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.id, [box.x + box.width / 2, box.y + box.height / 2]);
+  if (hit !== 'stage') throw new Error(`ネジまるの上のタップが盤面に届かない: ${hit}`);
+
+  // 姿勢を決め打ちして、1枚ずつ撮ってから横に並べる（並べるのはページの中のキャンバスで）
+  const tiles = [];
+  for (const [action, t] of MASCOT_POSES) {
+    await page.evaluate(([a, t]) => window.__app.mascot.force(a, t), [action, t]);
+    await nextFrames();
+    tiles.push((await page.screenshot({ clip: box })).toString('base64'));
+  }
+  await page.evaluate(() => window.__app.mascot.force(null));
+  const sheet = await page.evaluate(async ([tiles, w, h]) => {
+    const c = document.createElement('canvas');
+    c.width = w * 4;
+    c.height = h * 2;
+    const g = c.getContext('2d');
+    g.fillStyle = '#eaf4ff';
+    g.fillRect(0, 0, c.width, c.height);
+    for (const [i, b64] of tiles.entries()) {
+      const img = new Image();
+      img.src = `data:image/png;base64,${b64}`;
+      await img.decode();
+      g.drawImage(img, (i % 4) * w, Math.floor(i / 4) * h, w, h);
+    }
+    return c.toDataURL('image/png').split(',')[1];
+  }, [tiles, Math.round(box.width * 2), Math.round(box.height * 2)]);
+  const { writeFile } = await import('node:fs/promises');
+  await writeFile(join(outDir, 'mascot-poses.png'), Buffer.from(sheet, 'base64'));
+  console.log(`screenshot: ${join(outDir, 'mascot-poses.png')}`);
+
+  // 隠れたねじをタップすると「外せない」
+  const blocked = await page.evaluate(() => {
+    const g = window.__app.game, legal = new Set(g.legal());
+    return Object.keys(g.state.where).find((id) => g.state.where[id] === 'board' && !legal.has(id));
+  });
+  if (!blocked) throw new Error('隠れたねじが見つからない');
+  if (await page.evaluate((id) => window.__app.tapScrew(id), blocked) !== 'blocked') throw new Error(`ねじ ${blocked} が隠れていない`);
+  if (!(await history()).includes('flinch')) throw new Error(`外せないねじのタップでネジまるが動かない: ${await history()}`);
+  await waitRendered(page);
+
+  // 手順どおりに外し切る。途中で箱が満杯になると「小さな喜び」、クリアで「成功」
+  await playSolution(page);
+  await page.waitForSelector('#overlay:not([hidden])');
+  const h = await history();
+  if (!h.includes('joy')) throw new Error(`箱が満杯でネジまるが喜ばない: ${h}`);
+  if (h.at(-1) !== 'win' || await page.evaluate(() => window.__app.mascot.action) !== 'win') throw new Error(`クリアでネジまるが成功の動きをしない: ${h}`);
+  // 跳び終えてバンザイしたところ（成功の動きは 3.3 秒）を撮る
+  await page.waitForTimeout(3600);
+  await page.evaluate(() => window.__app.timeScale(0));
+  await nextFrames();
+  await save('mascot-cleared');
+  await page.evaluate(() => window.__app.timeScale(1));
+  // 失敗はカードの上で、詰みの画面と同じ置き方で姿勢だけ決め打ちして撮る
+  await page.evaluate(() => {
+    document.getElementById('overlay').className = 'stuck';
+    document.getElementById('end-title').textContent = '詰み';
+    document.getElementById('end-text').textContent = '外せるねじが無くなった';
+    document.getElementById('again').textContent = 'やり直す';
+    window.__app.mascot.force('lose', 2.4);
+  });
+  await nextFrames();
+  await save('mascot-stuck');
+  await page.evaluate(() => window.__app.mascot.force(null));
+
+  // やり直すと待機に戻る
+  const again = await page.locator('#again').boundingBox();
+  await tap(cdp, [again.x + again.width / 2, again.y + again.height / 2]);
+  await waitRendered(page);
+  const after = await page.evaluate(() => window.__app.mascot.action);
+  if (after !== 'idle') throw new Error(`やり直してもネジまるが待機に戻らない: ${after}`);
+  await context.close();
+}
+
 const server = await serve();
 const url = `http://127.0.0.1:${server.address().port}/`;
 const browser = await chromium.launch({
@@ -580,6 +682,7 @@ try {
     console.log(`screenshot: ${file}`);
   }
   await context.close();
+  if (only('mascot')) await mascotShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('fx')) await fxShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('size')) await sizeShots(browser, errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);

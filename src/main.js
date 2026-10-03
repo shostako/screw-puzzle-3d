@@ -3,6 +3,8 @@ import { createGesture } from './gesture.js';
 import { dragRotation, zoomDistance, radPerPx } from './view.js';
 import { buildBoard } from './scene.js';
 import { THEME, cssVariables } from './theme.js';
+import { bakeEnvironment } from './env.js';
+import { createMascot } from './mascot.js';
 import { createGame, hudOf, applyEvent } from './game.js';
 import { nearestScrew } from './pick.js';
 import { fixedBlocker, sweepHits } from './board.js';
@@ -90,34 +92,6 @@ camera.position.set(0, 0, distance);
 }
 // 艶の映り込み。起動時に1回だけ、小さな空の景色を PMREM に焼いて全部の材質で使う
 scene.environment = bakeEnvironment(renderer);
-
-function bakeEnvironment(r) {
-  const { stops, windows } = THEME.env;
-  const c = document.createElement('canvas');
-  c.width = 4;
-  c.height = 128;
-  const g = c.getContext('2d');
-  const grad = g.createLinearGradient(0, 0, 0, c.height);
-  for (const [o, color] of stops) grad.addColorStop(o, color);
-  g.fillStyle = grad;
-  g.fillRect(0, 0, c.width, c.height);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const env = new THREE.Scene();
-  env.add(new THREE.Mesh(new THREE.SphereGeometry(20, 16, 8), new THREE.MeshBasicMaterial({ side: THREE.BackSide, map: tex })));
-  for (const [x, y, z, w, h] of windows) {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
-    m.position.set(x, y, z);
-    m.lookAt(0, 0, 0);
-    env.add(m);
-  }
-  const pmrem = new THREE.PMREMGenerator(r);
-  const out = pmrem.fromScene(env, 0.02).texture;
-  pmrem.dispose();
-  env.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
-  tex.dispose();
-  return out;
-}
 
 // 立体はこの group ごと回す。盤面は中に作り直す（やり直し）
 const model = new THREE.Group();
@@ -493,7 +467,7 @@ async function play() {
         el.classList.add('closing');
         await wait(tl.cue - tl.lid);
         if (gen !== generation) break;
-        feedback.cue('boxFull');
+        cue('boxFull');
         sparkle(el);
         await wait(tl.leave - tl.cue);
         el.classList.add('done');
@@ -501,7 +475,7 @@ async function play() {
       }
       if (gen !== generation) break;
       // 板の落ちる音はタップの瞬間に、箱が閉まる音はふたが閉まる瞬間に鳴らしている
-      if (ev.type !== 'plate' && ev.type !== 'boxFull') feedback.cue(eventCue(ev));
+      if (ev.type !== 'plate' && ev.type !== 'boxFull') cue(eventCue(ev));
       hud = after;
       renderHud(hud, ev.type === 'boxSpawn' ? ev.box : -1);
       landAt(ev, before);
@@ -516,7 +490,7 @@ async function play() {
 function tapScrew(id) {
   const obj = board.screws.get(id);
   const r = game.tap(id);
-  feedback.cue(tapCue(r.reason));
+  cue(tapCue(r.reason));
   if (r.reason === 'blocked') {
     shake(obj);
     const by = movableBlockers(id);
@@ -533,7 +507,7 @@ function tapScrew(id) {
     syncPlates(physics, game.state);   // 1本になった板はぶら下がり、0本の板は落ち始める
     const fallen = r.events.filter((ev) => eventCue(ev) === 'plate');
     for (const ev of fallen) burst(board.plates.get(ev.plate));
-    if (fallen.length) feedback.cue('plate');
+    if (fallen.length) cue('plate');
     requestRender();
     queue.push({ events: r.events, obj, out, status: r.status });
     play();
@@ -555,7 +529,8 @@ function showEnd(status) {
   const ov = $('overlay');
   ov.className = status;
   const cleared = status === 'cleared';
-  feedback.cue(endCue(status));
+  seatMascot(true);
+  cue(endCue(status));
   // クリアしたらその場で次のステージを保存する（ボタンを押す前に閉じても、次は続きから）
   if (cleared && !freePlay) progress.cleared(stage);
   $('end-title').textContent = cleared ? (freePlay ? 'クリア！' : `ステージ ${stage} クリア！`) : '詰み';
@@ -609,6 +584,8 @@ function restart() {
   physics = createPhysics(LEVEL);
   stepClock = 0;
   game.restart();
+  mascot.reset();
+  seatMascot(false);
   syncPlates(physics, game.state);
   hud = hudOf(game.state);
   renderHud(hud);
@@ -700,6 +677,20 @@ $('home').addEventListener('click', goHome);
 
 // 音と振動の入り切り（端末に保存する）
 const feedback = createFeedback(deviceStorage());
+
+// マスコット「ネジまる」（D3）。左下の小さなキャンバスに別の描き手で描き、演出の時計で動く。
+// 合図（cue）を音と振動と同じ名前で受けて、成功・失敗・箱が満杯・外せないねじに反応する（音を切っていても動く）
+const mascot = createMascot($('mascot'), { clock: fxClock, environment: bakeEnvironment });
+function cue(name) {
+  feedback.cue(name);
+  if (name) mascot.react(name);
+}
+// 終わりの画面では、ネジまるをカードの上に大きく乗せる（成功・失敗の動きを見せる）。やり直すと左下へ戻す
+function seatMascot(onCard) {
+  const c = $('mascot');
+  if (onCard) $('overlay').querySelector('.card').prepend(c);
+  else document.body.insertBefore(c, $('flyers'));
+}
 const soundButton = $('sound');
 function showSound() {
   soundButton.classList.toggle('off', !feedback.on);
@@ -709,7 +700,7 @@ function showSound() {
 soundButton.addEventListener('click', () => {
   feedback.on = !feedback.on;
   showSound();
-  feedback.cue('box');
+  feedback.cue('box');   // 切り替えの確かめの音（マスコットは動かさない）
 });
 showSound();
 $('again').addEventListener('click', restart);
@@ -808,6 +799,13 @@ window.__app = {
     requestRender();
   },
   visibleScrews,
+  // マスコット: 今の動き、合図を送る、姿勢を決め打ちする（動きの名前と秒。null で戻す）
+  mascot: {
+    get action() { return mascot.action; },
+    history: mascot.history,
+    react: (name) => mascot.react(name),
+    force: (action, t) => mascot.force(action, t),
+  },
   legal: () => game.legal(),
   // 生成した盤面の、解ける手順
   get solution() { return LEVEL.meta?.solution ?? null; },
