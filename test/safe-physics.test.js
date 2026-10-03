@@ -83,13 +83,14 @@ describe('安全側の見積もりは物理より甘くない', () => {
     expect(crossCheck(BOX_LEVEL, path, tiltFor(0))).toEqual([]);
   });
 
-  for (const kind of ['box', 'shelf', 'table']) {
+  // 題材（D4）は部品が多く1盤面が重いので、シードを絞る（手元では 1〜40 で確かめた）
+  for (const [kind, seeds] of [['box', 12], ['shelf', 12], ['table', 12], ['car', 6], ['house', 6], ['animal', 6]]) {
     it(`生成した盤面（${kind}）`, () => {
-      for (let seed = 1; seed <= 12; seed++) {
+      for (let seed = 1; seed <= seeds; seed++) {
         const level = generateLevel(seed, { kind });
         expect(crossCheck(level, level.meta.solution, tiltFor(seed)), `シード ${seed}`).toEqual([]);
       }
-    }, 30000);
+    }, 60000);
   }
 
   it('甘い見積もり（どの板も隠さない）に差し替えると、この検査で見つかる', () => {

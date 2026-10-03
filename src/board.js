@@ -4,6 +4,12 @@
 //   plates: [{ id, size: [幅, 高さ], thickness, position: [x, y, z], rotation: [rx, ry, rz] }]
 //     板は局所座標の xy 平面に置いた板で、厚みは局所の z 方向（中心から ±thickness/2）。
 //     形は size の長方形。凸多角形にしたいときは outline: [[x, y], ...]（局所の xy、反時計回りでも時計回りでもよい）。
+//     shape で部品の種類を変えられる（D4。省略は 'plate'）:
+//       'block'    丸めた箱。当たりの形は size × thickness の直方体のまま、見た目だけ全部の縁を大きく丸める。
+//       'cylinder' 円柱。軸が局所の z、半径 radius、長さ thickness。当たりの形は円に外接する CYLINDER_SIDES 角形の柱
+//                  （見た目の円柱がはみ出さない側）。ねじは両端の円の面に置く。
+//     どれも「輪郭（凸）を局所の z へ押し出した柱」なので、隠れ判定・安全側の見積もり・物理は板と同じ式で扱える。
+//     部品の木（parts.js）から作った盤面は、板に parent（親の部品の id、根は null）と role・color も持つ（ルールは見ない）。
 //     向きは rotation（three.js の Euler 'XYZ'、ラジアン）か quaternion: [x, y, z, w] のどちらか。
 //   screws: [{ id, plate, color, position: [x, y, z], dir: [x, y, z] }]
 //     position はねじ頭の中心で、留めている板の表面の上。dir は抜ける向き（頭の側、軸の外向き）の単位ベクトル。
@@ -25,9 +31,26 @@ export const SCREW_RADIUS = 0.3;
 // 触れているだけの板を重なりに数えないための縮め幅（盤面の大きさは数〜十程度の単位を想定）
 export const CONTACT = 1e-4;
 
+export const CYLINDER_SIDES = 12;
+
+// 円に外接する正 n 角形（頂点は反時計回り）
+export function circleOutline(radius, n = CYLINDER_SIDES) {
+  const R = radius / Math.cos(Math.PI / n);
+  return Array.from({ length: n }, (_, i) => {
+    const a = ((i + 0.5) / n) * Math.PI * 2;
+    return [R * Math.cos(a), R * Math.sin(a)];
+  });
+}
+
 // 板の輪郭（局所の xy）
+const circleCache = new Map();
 export function outlineOf(plate) {
   if (plate.outline) return plate.outline;
+  if (plate.shape === 'cylinder') {
+    let ol = circleCache.get(plate.radius);
+    if (!ol) circleCache.set(plate.radius, (ol = circleOutline(plate.radius)));
+    return ol;
+  }
   const [w, h] = plate.size;
   return [[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]];
 }
@@ -177,7 +200,7 @@ function isConvex(ol) {
   return sign !== 0;
 }
 
-function insidePolygon([x, y], ol) {
+export function insidePolygon([x, y], ol) {
   let sign = 0;
   for (let i = 0; i < ol.length; i++) {
     const a = ol[i], b = ol[(i + 1) % ol.length];

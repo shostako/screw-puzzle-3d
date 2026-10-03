@@ -4,6 +4,7 @@
 // 作り方:
 //   1. 形を組む: 箱（閉じた箱、前が開いた棚、仕切りや中の棚板つき）・本棚・机のどれか。板はどれも軸に沿った向き。
 //      外側の面には小さな札を載せ、その下のねじを隠す。中の棚板や仕切りのねじは、外側の板を外すまで見えない。
+//      題材（D4、themes.js の車・家・ぶた）は部品の木（parts.js）で組み、板に加えて丸めた箱と円柱を使う。札は載せない。
 //   2. ねじを置く: 板ごとに外から触れる面へ 2〜4 本。合計は 3 の倍数にそろえる。
 //   3. 色を決めずに外せる順番を探す（safe.js の安全側の見積もりで、どの板も最後のねじで抜け出せる順）。
 //      見つからない形は作り直す。
@@ -13,12 +14,18 @@
 // meta に { seed, kind, solution（見つけた手順）, tries（色の割り当てを試した回数）, fallback, attempt（形を作り直した回数）} を持つ。
 
 import { safeBlocker } from './safe.js';
-import { coverMap } from './board.js';
+import { coverMap, plateFrame, plateVertices, outlineOf, insetOutline, insidePolygon } from './board.js';
+import { flattenTree } from './parts.js';
+import { THEMES, THEME_BUILDERS } from './themes.js';
 import { solve } from './solve.js';
 import { newGame, removeScrew, isCleared } from './rules.js';
 
 export const COLORS = ['red', 'blue', 'yellow', 'green', 'purple', 'cyan', 'orange', 'pink'];
+// 家具の形（M6）。kind を省いたときはこの中から選ぶ（M6 からのシードの盤面を変えないため、題材は入れない）
 export const KINDS = ['box', 'shelf', 'table'];
+// 題材（D4）も含めた、kind に指定できる全部
+export const ALL_KINDS = [...KINDS, ...THEMES];
+export { THEMES };
 
 const T = 0.3;             // 板の厚み
 const R = 0.3;             // ねじ頭の半径（board.js の SCREW_RADIUS と同じ）
@@ -185,6 +192,8 @@ function placeScrews(rnd, b, n) {
 // 板どうしが隠し合って外せないねじが残る置き方（peelable でない）なら、同じ形でねじだけ置き直す
 const SCREW_TRIES = 8;
 export function buildShape(rnd, kind, labels, form = {}) {
+  if (THEME_BUILDERS[kind]) return buildTheme(rnd, kind, form);
+  if (!BUILDERS[kind]) throw new Error(`形の種類が無い: ${kind}`);
   const parts = BUILDERS[kind](rnd, form);
   addLabels(rnd, parts, labels);
   for (let t = 0; t < SCREW_TRIES; t++) {
@@ -220,6 +229,120 @@ function placeAll(rnd, parts, maxPer) {
   return { plates, screws };
 }
 
+// ---- 題材（部品の木） ----
+
+function buildTheme(rnd, kind, form) {
+  const parts = flattenTree(THEME_BUILDERS[kind](rnd, form));
+  // 全体の外接箱の中心を原点へ（題材ごとに根の置き場所を気にせず、画面の真ん中に来る）
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (const { plate } of parts) {
+    for (const v of plateVertices(plate)) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], v[k]); hi[k] = Math.max(hi[k], v[k]); }
+  }
+  const mid = [0, 1, 2].map((k) => Math.round(((lo[k] + hi[k]) / 2) * 20) / 20);
+  for (const { plate } of parts) plate.position = plate.position.map((x, k) => x - mid[k]);
+  for (let t = 0; t < SCREW_TRIES; t++) {
+    const shape = placeParts(rnd, parts, form.maxPer ?? 4);
+    if (shape && peelable(shape)) return shape;
+  }
+  return null;
+}
+
+// 部品の面の広さ（ねじの本数の目安）
+function faceArea(plate) {
+  if (plate.shape === 'cylinder') return Math.PI * plate.radius ** 2;
+  return Math.abs(signedArea(outlineOf(plate)));
+}
+
+// 部品の木の板すべてにねじを置く。どの部品も 2 本以上（置けなければ形ごと作り直す。親を捨てると子が宙に浮くため）
+export function placeParts(rnd, parts, maxPer) {
+  const per = parts.map(({ plate, faces }) => {
+    const area = faceArea(plate);
+    const n = Math.min(maxPer, 2 + Math.floor(rnd() * (area > 12 ? 3 : area > 4 ? 2 : 1)));
+    return placeOnPart(rnd, plate, faces, n);
+  });
+  if (per.some((x) => x.length < 2)) return null;
+  let total = per.reduce((m, x) => m + x.length, 0);
+  while (total % 3) {
+    const i = per.reduce((best, x, k) => (x.length > 2 && (best < 0 || x.length > per[best].length) ? k : best), -1);
+    if (i < 0) break;
+    per[i].pop();
+    total--;
+  }
+  if (total % 3 || total < 9) return null;
+  const plates = parts.map((x) => x.plate), screws = [];
+  parts.forEach(({ plate }, i) => {
+    per[i].forEach((s, k) => screws.push({ id: `${plate.id}-${k + 1}`, plate: plate.id, color: null, position: s.p, dir: s.dir }));
+  });
+  return { plates, screws };
+}
+
+// 部品の面（局所の z = ±厚み/2）に n 本。向きは任意（斜めの屋根板もそのまま）。位置は局所の xy で 0.05 刻み
+export function placeOnPart(rnd, plate, faces, n) {
+  const { center, u, v, n: nrm } = plateFrame(plate);
+  let inside, x0, x1, y0, y1;
+  if (plate.shape === 'cylinder') {
+    const rr = plate.radius - INSET;
+    if (rr < 0) return [];
+    inside = (p) => Math.hypot(p[0], p[1]) <= rr + 1e-9;
+    x0 = y0 = -rr; x1 = y1 = rr;
+  } else {
+    const ol = outlineOf(plate), inner = insetOutline(ol, INSET);
+    if (signedArea(inner) * signedArea(ol) <= 0 || Math.abs(signedArea(inner)) < 1e-6) return [];
+    inside = (p) => insidePolygon(p, inner);
+    x0 = Math.min(...inner.map((p) => p[0])); x1 = Math.max(...inner.map((p) => p[0]));
+    y0 = Math.min(...inner.map((p) => p[1])); y1 = Math.max(...inner.map((p) => p[1]));
+  }
+  const h = (side) => side * plate.thickness / 2;
+  const at = (q, side) => ({ q, p: [0, 1, 2].map((k) => center[k] + u[k] * q[0] + v[k] * q[1] + nrm[k] * h(side)), dir: nrm.map((x) => x * side) });
+  const snap = (x) => Math.round(x * 20) / 20;
+  const fits = (q, out) => inside(q) && !out.some((o) => Math.hypot(o.q[0] - q[0], o.q[1] - q[1]) < GAP);
+  const fill = (out) => {
+    for (let t = 0; t < 60 && out.length < n; t++) {
+      const side = pick(rnd, faces);
+      const q = [snap(x0 + rnd() * (x1 - x0)), snap(y0 + rnd() * (y1 - y0))];
+      if (fits(q, out)) out.push(at(q, side));
+    }
+    return out;
+  };
+  let out = fill([]);
+  if (out.length < 2) {
+    // 狭い部品（車輪・ドアなど）は乱数では 2 本目が入りにくいので、一番離れた 2 点に置き直してから残りを足す
+    // 候補の 2 点の組を、離れている順に試す（0.05 刻みに丸めても内側に残り、GAP 以上離れる組を採る）
+    const pairs = [];
+    if (plate.shape === 'cylinder') {
+      const turn = Math.floor(rnd() * 8);
+      for (let k = 0; k < 8; k++) {
+        const a = ((k + turn) % 8) * Math.PI / 4, rr = x1 * 0.97;
+        pairs.push([[Math.cos(a) * rr, Math.sin(a) * rr], [-Math.cos(a) * rr, -Math.sin(a) * rr]]);
+      }
+    } else {
+      const inner = insetOutline(outlineOf(plate), INSET);
+      const c = inner.reduce((m, p) => [m[0] + p[0] / inner.length, m[1] + p[1] / inner.length], [0, 0]);
+      const vs = inner.map((p) => [p[0] + (c[0] - p[0]) * 1e-3, p[1] + (c[1] - p[1]) * 1e-3]);
+      for (let i = 0; i < vs.length; i++) for (let j = i + 1; j < vs.length; j++) pairs.push([vs[i], vs[j]]);
+      pairs.sort((p, q) => Math.hypot(q[0][0] - q[1][0], q[0][1] - q[1][1]) - Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]));
+    }
+    out = [];
+    for (const pair of pairs) {
+      const qs = pair.map((p) => [snap(p[0]), snap(p[1])]);
+      const got = [];
+      for (const q of qs) if (fits(q, got)) got.push(at(q, pick(rnd, faces)));
+      if (got.length === 2) { out = got; break; }
+    }
+    if (out.length === 2) fill(out);
+  }
+  return out;
+}
+
+function signedArea(ol) {
+  let a = 0;
+  for (let i = 0; i < ol.length; i++) {
+    const p = ol[i], q = ol[(i + 1) % ol.length];
+    a += p[0] * q[1] - q[0] * p[1];
+  }
+  return a / 2;
+}
+
 // 箱の色の並び（1箱3本）を窓の中で混ぜ、外す順番の早いねじほど前の色を割り当てる。noise は順番をまたぐ混ざり具合
 function assignColors(order, queue, win, noise, rnd) {
   const L = queue.flatMap((c) => [c, c, c]);
@@ -232,7 +355,7 @@ function assignColors(order, queue, win, noise, rnd) {
   return new Map(keyed.map((x, i) => [x.id, L[i]]));
 }
 
-// opts: kind（'box' | 'shelf' | 'table'、省略で乱数）、colors（色の数）、labels（札の数）、
+// opts: kind（'box' | 'shelf' | 'table'、省略で乱数。題材の 'car' | 'house' | 'animal' も指定できる）、colors（色の数）、labels（札の数）、
 //       win / noise（色の混ぜ方。大きいほど待機スロットを使う難しい割り当て）、budget（手順探索の打ち切り）、
 //       open / inner / maxPer（形の指定。箱の前を開けるか、中の仕切り・棚板を入れるか、板1枚のねじの上限）、
 //       alternate（箱の色を混ぜずに順に回す）

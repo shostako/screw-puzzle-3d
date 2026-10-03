@@ -10,7 +10,7 @@ import { safeBlocker } from './safe.js';
 import { nearestScrew } from './pick.js';
 import { fixedBlocker, sweepHits } from './board.js';
 import { initPhysics, createPhysics, syncPlates, STEP } from './physics.js';
-import { generateLevel, KINDS } from './generator.js';
+import { generateLevel, ALL_KINDS } from './generator.js';
 import { BOX_LEVEL } from './levels/box.js';
 import { stageLevel, START_VIEW as START_EULER } from './stages.js';
 import { createProgress, deviceStorage } from './progress.js';
@@ -19,7 +19,7 @@ import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
 import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf } from './effects.js';
 
 // 既定はステージの進行（到達したステージから始める）。
-// ?seed=番号（と &kind=box|shelf|table）なら生成した盤面を1つだけ遊ぶ（進行は保存しない）。
+// ?seed=番号（と &kind=box|shelf|table|car|house|animal）なら生成した盤面を1つだけ遊ぶ（進行は保存しない）。
 // ?level=box なら M3 の固定の箱（物理の確かめ用。進行は保存しない）。
 // ?stage=番号 ならそのステージから（確かめ用。クリアすれば進行は保存する）
 const query = new URLSearchParams(window.location.search);
@@ -35,7 +35,7 @@ function levelFor() {
   if (fixedBox) return BOX_LEVEL;
   if (freePlay) {
     const kind = query.get('kind');
-    return generateLevel(freeSeed, KINDS.includes(kind) ? { kind } : {});
+    return generateLevel(freeSeed, ALL_KINDS.includes(kind) ? { kind } : {});
   }
   return stageLevel(stage);
 }

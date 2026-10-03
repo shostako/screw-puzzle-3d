@@ -34,6 +34,10 @@
 //   fx-box.png       満杯の箱のふたが閉まり、星が散ったところ
 //   fx-drop.png      盤面の外へ落ちた板が回りながら画面の下へ消えていくところ
 //   あわせて、演出の後に立体の描く物の数が増えていない（板が消えた分だけ減る）ことを確かめる
+//   （題材、D4。部品の木で組んだ車・家・ぶた ?seed=番号&kind=car|house|animal）
+//   theme-<題材>.png        開いた直後
+//   theme-<題材>-below.png  下から見上げた向き（車輪・脚の裏のねじ）
+//   theme-car-midway.png / theme-car-cleared.png  車を手順どおりに 9 本外したところと、クリアの画面
 //   （マスコット、D3。生成した箱 ?seed=4&kind=box で）
 //   mascot-start.png    開いた直後（左下で待機しているネジまる）
 //   mascot-poses.png    動きごとの姿勢を並べたもの（待機・瞬き・外せない・箱が満杯・成功の回転ジャンプ・成功の後・失敗の震え・失敗の後）
@@ -58,7 +62,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -280,6 +284,25 @@ const genShots = [
   } },
   { name: 'gen-cleared', act: async (cdp, page) => {
     await playSolution(page);   // 続きから（外したねじは 'gone' になるので、残りだけが外れる）
+    await page.waitForSelector('#overlay:not([hidden])');
+  } },
+];
+
+// 題材（D4）
+const THEMED = [['car', 1], ['house', 1], ['animal', 1]];
+const themeShots = [
+  ...THEMED.flatMap(([kind, seed]) => [
+    { name: `theme-${kind}`, query: `?seed=${seed}&kind=${kind}`, act: async () => {} },
+    { name: `theme-${kind}-below`, act: async (cdp, page) => {
+      await page.evaluate(() => window.__app.view(-0.7, 0.5, 0, 19));
+    } },
+  ]),
+  { name: 'theme-car-midway', query: `?seed=${THEMED[0][1]}&kind=car`, act: async (cdp, page) => {
+    await playSolution(page, 9);
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+  } },
+  { name: 'theme-car-cleared', act: async (cdp, page) => {
+    await playSolution(page);
     await page.waitForSelector('#overlay:not([hidden])');
   } },
 ];
@@ -904,7 +927,7 @@ try {
     await page.screenshot({ path: file });
     console.log(`screenshot: ${file}`);
   }
-  for (const s of only('gen') ? genShots : []) {
+  for (const s of [...(only('gen') ? genShots : []), ...(only('theme') ? themeShots : [])]) {
     if (s.query) {
       await page.goto(url + s.query);
       await waitRendered(page);
