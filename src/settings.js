@@ -1,4 +1,4 @@
-// 設定（後回しの項目「設定」）。音・振動・回す速さ・画質・ネジまるの表示・ねじ穴の形（E2）を端末に保存する。
+// 設定（後回しの項目「設定」）。音・BGM・振動・回す速さ・画質・ネジまるの表示・ねじ穴の形（E2）を端末に保存する。
 // 保存先は progress.js と同じく localStorage の形を外から渡す（テストでは Map で代用）。DOM にも描画にも依存しない。
 // 記録を消す（clearRecords）は、到達したステージと自己ベストだけを消し、設定は残す。
 
@@ -23,11 +23,12 @@ export const QUALITIES = {
 };
 
 // drives: ねじ穴の形を色ごとに変えるか（E2 の色の見分け。既定は全部六角穴のキャップボルト）
-export const DEFAULTS = Object.freeze({ sound: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true, drives: false });
+export const DEFAULTS = Object.freeze({ sound: true, bgm: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true, drives: false });
 
 // 値として受け付けるもの（壊れた値・知らない値は既定に戻す）
 const VALID = {
   sound: (v) => typeof v === 'boolean',
+  bgm: (v) => typeof v === 'boolean',
   vibrate: (v) => typeof v === 'boolean',
   speed: (v) => Object.hasOwn(SPEEDS, v),
   quality: (v) => Object.hasOwn(QUALITIES, v),

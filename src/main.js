@@ -590,7 +590,8 @@ function tapScrew(id) {
     syncPlates(physics, game.state);   // 1本になった板はぶら下がり、0本の板は落ち始める
     const fallen = r.events.filter((ev) => eventCue(ev) === 'plate');
     for (const ev of fallen) burst(board.plates.get(ev.plate));
-    if (fallen.length) cue('plate');
+    // 落ちる板のうち一番大きいものの大きさで、コトンの音程を決める（大きい板ほど低い）
+    if (fallen.length) cue('plate', { size: Math.max(...fallen.map((ev) => plateSize(ev.plate))) });
     requestRender();
     if (r.status !== 'playing') playClock.pause();   // 時間は決着のタップまで（演出を待つ間は数えない）
     queue.push({ events: r.events, obj, out, status: r.status });
@@ -1024,16 +1025,21 @@ $('restart').addEventListener('click', restart);
 $('hint-btn').addEventListener('click', showHint);
 $('home').addEventListener('click', goHome);
 
-// 音と振動（入り切りは設定が持つ）
+// 音・BGM・振動（入り切りは設定が持つ。BGM は最初のタッチで始まり、裏に回ると止まる）
 const feedback = createFeedback(settings);
+// 板の大きさ（面の面積の平方根）。落ちる音の音程に使う
+function plateSize(id) {
+  const p = LEVEL.plates.find((q) => q.id === id);
+  return p ? Math.sqrt(p.size[0] * p.size[1]) : undefined;
+}
 
 // マスコット「ネジまる」（D3）。左下の小さなキャンバスに別の描き手で描き、演出の時計で動く。
 // 合図（cue）を音と振動と同じ名前で受けて、成功・失敗・箱が満杯・外せないねじに反応する（音を切っていても動く）
 const mascot = createMascot($('mascot'), {
   clock: fxClock, environment: bakeEnvironment, maxRatio: quality().mascotRatio, idleEvery: quality().idleEvery,
 });
-function cue(name) {
-  feedback.cue(name);
+function cue(name, opts) {
+  feedback.cue(name, opts);
   if (name) mascot.react(name);
 }
 // 終わりの画面では、ネジまるをカードの上に大きく乗せる（成功・失敗の動きを見せる）。やり直すと左下へ戻す
