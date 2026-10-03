@@ -8,7 +8,7 @@ import { createMascot } from './mascot.js';
 import { createGame, hudOf, applyEvent, rewindPoint } from './game.js';
 import { safeBlocker } from './safe.js';
 import { nearestScrew } from './pick.js';
-import { fixedBlocker, sweepHits } from './board.js';
+import { fixedBlocker, sweepHits, outlineOf } from './board.js';
 import { initPhysics, createPhysics, syncPlates, STEP } from './physics.js';
 import { generateLevel, ALL_KINDS } from './generator.js';
 import { BOX_LEVEL } from './levels/box.js';
@@ -1030,7 +1030,10 @@ const feedback = createFeedback(settings);
 // 板の大きさ（面の面積の平方根）。落ちる音の音程に使う
 function plateSize(id) {
   const p = LEVEL.plates.find((q) => q.id === id);
-  return p ? Math.sqrt(p.size[0] * p.size[1]) : undefined;
+  if (!p) return undefined;
+  // 円柱（車輪）と三角の屋根は size を持たないので、輪郭の外接する長方形で測る
+  const ol = outlineOf(p), xs = ol.map((q) => q[0]), ys = ol.map((q) => q[1]);
+  return Math.sqrt((Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys)));
 }
 
 // マスコット「ネジまる」（D3）。左下の小さなキャンバスに別の描き手で描き、演出の時計で動く。
