@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { createGesture } from './gesture.js';
 import { dragRotation, zoomDistance, radPerPx } from './view.js';
 import { buildBoard } from './scene.js';
+import { THEME, cssVariables } from './theme.js';
 import { createGame, hudOf, applyEvent } from './game.js';
 import { nearestScrew } from './pick.js';
 import { fixedBlocker, sweepHits } from './board.js';
@@ -35,6 +36,8 @@ function levelFor() {
 let LEVEL = levelFor();
 
 const $ = (id) => document.getElementById(id);
+// HUD と背景の色はテーマの表から入れる（CSS に色を二重に書かない）
+for (const [name, value] of Object.entries(cssVariables())) document.documentElement.style.setProperty(name, value);
 const canvas = $('stage');
 const hint = $('hint');
 
@@ -43,8 +46,9 @@ const hint = $('hint');
 // 画素の細かい画面（devicePixelRatio 2 以上。今のスマホのほとんど）では、縁のギザギザが目立たないので
 // アンチエイリアス（MSAA）を切って、塗る量を減らす
 const DPR = window.devicePixelRatio || 1;
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: DPR < 2, powerPreference: 'high-performance' });
-renderer.setClearColor(0xf4ead9);
+// 背景の空とマットは CSS で描き、キャンバスは透明にして重ねる（3D で描くものを増やさない）
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: DPR < 2, alpha: true, powerPreference: 'high-performance' });
+renderer.setClearColor(0x000000, 0);
 
 // 描く解像度。DPR は 2 まで。動かしている間の1フレームが重ければ段階的に下げる（中級機で滑らかに動かすため）。
 // 下げた解像度はその回のあいだ保つ（上げ下げを繰り返すと画面がちらつく）
@@ -73,10 +77,46 @@ const START_DISTANCE = 19;
 let distance = START_DISTANCE;
 camera.position.set(0, 0, distance);
 
-scene.add(new THREE.HemisphereLight(0xfff8ee, 0x8a7a66, 1.5));
-const sun = new THREE.DirectionalLight(0xffffff, 1.7);
-sun.position.set(4, 7, 9);
-scene.add(sun);
+// 光: 半球光・主光・縁の光（theme.js）。影は描かない
+{
+  const { hemi, sun, rim } = THEME.lights;
+  scene.add(new THREE.HemisphereLight(hemi.sky, hemi.ground, hemi.intensity));
+  for (const l of [sun, rim]) {
+    const light = new THREE.DirectionalLight(l.color, l.intensity);
+    light.position.set(...l.position);
+    scene.add(light);
+  }
+}
+// 艶の映り込み。起動時に1回だけ、小さな空の景色を PMREM に焼いて全部の材質で使う
+scene.environment = bakeEnvironment(renderer);
+
+function bakeEnvironment(r) {
+  const { stops, windows } = THEME.env;
+  const c = document.createElement('canvas');
+  c.width = 4;
+  c.height = 128;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, c.height);
+  for (const [o, color] of stops) grad.addColorStop(o, color);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, c.width, c.height);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const env = new THREE.Scene();
+  env.add(new THREE.Mesh(new THREE.SphereGeometry(20, 16, 8), new THREE.MeshBasicMaterial({ side: THREE.BackSide, map: tex })));
+  for (const [x, y, z, w, h] of windows) {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide }));
+    m.position.set(x, y, z);
+    m.lookAt(0, 0, 0);
+    env.add(m);
+  }
+  const pmrem = new THREE.PMREMGenerator(r);
+  const out = pmrem.fromScene(env, 0.02).texture;
+  pmrem.dispose();
+  env.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+  tex.dispose();
+  return out;
+}
 
 // 立体はこの group ごと回す。盤面は中に作り直す（やり直し）
 const model = new THREE.Group();
