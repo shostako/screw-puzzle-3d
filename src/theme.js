@@ -18,6 +18,27 @@ export const THEME = {
   // 板: 淡い色を順に回す。隣り合う板が見分けられるよう、白と淡い色を交互に並べる
   plateColors: ['#fbf8f1', '#cfe5ff', '#d3f2df', '#fff0c4', '#ffdcd0', '#e2dbff', '#f4f6f8', '#c8eef0'],
   labelColor: '#ffd0c2',   // 札（外側に載せた小さな板）
+  // 題材（D4）の部品の色。部品の木の color の名前 → 表示の色。ねじの色と紛れないよう、どれも淡いか暗い
+  partColors: {
+    coral: '#ffb4a2',
+    sky: '#a9d4ff',
+    mint: '#a8e6c4',
+    lemon: '#ffe6a0',
+    lilac: '#d4c8ff',
+    white: '#fbf8f1',
+    tire: '#4b505b',
+    glass: '#d6f0ff',
+    roof: '#f19a7e',
+    wall: '#fff4de',
+    door: '#d9a472',
+    grass: '#bfe8a6',
+    pink: '#ffb8c8',
+    pinkDeep: '#ff8ea6',
+    spot: '#f6eef0',
+  },
+  // 丸めた箱と円柱（D4）。板より厚いので丸みを大きくする
+  block: { corner: 0.5, bevel: 0.22 },
+  cylinder: { bevel: 0.1, segments: 32 },
   plate: {
     roughness: 0.32,
     envMapIntensity: 0.45,

@@ -16,7 +16,7 @@ export function buildBoard(level) {
   const plates = new Map(), screws = new Map();
 
   level.plates.forEach((p, i) => {
-    const color = p.id.startsWith('label') ? THEME.labelColor : THEME.plateColors[i % THEME.plateColors.length];
+    const color = THEME.partColors[p.color] ?? (p.id.startsWith('label') ? THEME.labelColor : THEME.plateColors[i % THEME.plateColors.length]);
     const obj = plateObject(p, color);
     obj.userData.plateId = p.id;
     plates.set(p.id, obj);
@@ -58,13 +58,28 @@ export function roundedShape(outline, r) {
 
 // 角を丸め、縁を面取りした板。外形（面取りの外側）は当たりの形と同じ大きさ。
 // 輪郭を面取りの幅だけ内側へ縮めて押し出し、面取りで元の大きさまで戻す
+// 丸めた箱（block）は同じ作りで丸みを大きくし、円柱は円の輪郭を押し出す（円柱の当たりの形は外接する多角形なので、見た目は収まる）
 function plateGeometry(p) {
-  const { corner, bevel } = THEME.plate;
+  if (p.shape === 'cylinder') return cylinderGeometry(p);
+  const { corner, bevel } = p.shape === 'block' ? THEME.block : THEME.plate;
   const b = Math.min(bevel, p.thickness * 0.3);
   const shape = roundedShape(insetOutline(outlineOf(p), b), Math.max(0, corner - b));
   const depth = p.thickness - 2 * b;
   const geo = new THREE.ExtrudeGeometry(shape, {
     depth, bevelEnabled: true, bevelThickness: b, bevelSize: b, bevelSegments: 2, curveSegments: 4,
+  });
+  geo.translate(0, 0, -depth / 2);
+  return geo;
+}
+
+function cylinderGeometry(p) {
+  const { bevel, segments } = THEME.cylinder;
+  const b = Math.min(bevel, p.thickness * 0.3, p.radius * 0.3);
+  const shape = new THREE.Shape();
+  shape.absarc(0, 0, p.radius - b, 0, Math.PI * 2, false);
+  const depth = p.thickness - 2 * b;
+  const geo = new THREE.ExtrudeGeometry(shape, {
+    depth, bevelEnabled: true, bevelThickness: b, bevelSize: b, bevelSegments: 2, curveSegments: segments,
   });
   geo.translate(0, 0, -depth / 2);
   return geo;

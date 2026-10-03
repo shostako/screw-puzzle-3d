@@ -178,7 +178,7 @@ export function createSafeModel(level) {
 
   // 板 i をねじ j から外したとき、抜け出せるか。fixed: 固定の板のビット、hanging: ぶら下がった他の板 [[板, 軸のねじ], ...]
   // 区間ごと・向きごとに掃いた形と、それに残った板がかかるかは覚えておく（状態が変わっても使い回せる）
-  const escCache = new Map(), sweptCache = new Map(), blockCache = new Map();
+  const escCache = new Map(), sweptCache = new Map();
   function swept(r, sg) {
     let out = sweptCache.get(sg.id);
     if (out) return out;
@@ -194,21 +194,33 @@ export function createSafeModel(level) {
     sweptCache.set(sg.id, out);
     return out;
   }
+  // 弧の届く範囲全部（cov の区間の和）を包む外接箱。これにかからなければ、どの区間にもかからない
+  function hullOf(ar) {
+    if (!ar.hull) {
+      const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (const sg of ar.cov) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], sg.box.lo[k]); hi[k] = Math.max(hi[k], sg.box.hi[k]); }
+      ar.hull = { lo, hi };
+    }
+    return ar.hull;
+  }
+  // 掃いた形ごとに、残った板の形の番号 → かかるか（番号は小さな整数なので Map の引きが速い）
   function blocks(sw, o) {
-    const key = sw.id * 2 ** 24 + o.id;
-    let b = blockCache.get(key);
-    if (b === undefined) blockCache.set(key, (b = meet(sw, o)));
+    const memo = sw.blocks || (sw.blocks = new Map());
+    let b = memo.get(o.id);
+    if (b === undefined) memo.set(o.id, (b = meet(sw, o)));
     return b;
   }
   function canEscape(i, j, fixed, hanging, hangKey = hanging.map((h) => h.join('.')).join(',')) {
     const key = `${i}:${j}:${fixed}:${hangKey}`;
     let ok = escCache.get(key);
     if (ok !== undefined) return ok;
-    const obstacles = [];
+    const obstacles = [], arcs = [];
     for (let k = 0; k < plates.length; k++) if (k !== i && (fixed >> k & 1)) obstacles.push(escShape[k]);
-    for (const [h, hj] of hanging) if (h !== i) obstacles.push(...arc(h, hj, fixed).cov);
+    for (const [h, hj] of hanging) if (h !== i) arcs.push(arc(h, hj, fixed));
     const a = arc(i, j, fixed);
-    ok = a.esc.every((sg) => swept(a.r, sg).some((sw) => !obstacles.some((o) => blocks(sw, o))));
+    // ぶら下がった板の弧は、まず弧全体の外接箱で調べ、かかるときだけ区間ごとに調べる（結果は区間ごとに調べるのと同じ）
+    const clear = (sw) => !obstacles.some((o) => blocks(sw, o)) && !arcs.some((ar) => boxesMeet(sw.box, hullOf(ar)) && ar.cov.some((o) => blocks(sw, o)));
+    ok = a.esc.every((sg) => swept(a.r, sg).some(clear));
     escCache.set(key, ok);
     return ok;
   }
