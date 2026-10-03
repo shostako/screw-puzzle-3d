@@ -4,23 +4,30 @@
 import { newGame, removeScrew, status, screwById, legalMoves, SLOT_COUNT } from './rules.js';
 import { blockerFor } from './board.js';
 import { solve } from './solve.js';
+import { safeBlocker } from './safe.js';
+import { findHint } from './hint.js';
 
 // 1局。tap(id) は { reason, events, status } を返す。
 //   reason: 'ok' | 'blocked'（隠れている）| 'full'（入れる所が無い）| 'gone' | 'over'（クリアか詰みの後）
 // isBlocked はタップしたねじを外せるかの判定（物理があれば今の姿勢で調べる physics.blocker()）。
 // stuckBlocker は詰みを決める判定。物理で動く板がある間は、回せば外せるようになるかもしれないので、
 // 動かない板だけで判定する楽観的なもの（board.js の fixedBlocker）を渡す。省略すると isBlocked と同じ。
+// hint(prefer) は今の局面から解ける手順の最初のねじを返し（hint.js の findHint）、使った回数 hints を数える（クリアの評価で使う）。
+// prefer（画面で見えているねじ）から選べればそちらを優先する。探索の隠れ判定は安全側の見積もり（safe.js）。初めて使うときに作る
 //
 // 戻る: 外した手ごとに、外す直前の状態とねじを覚えている（history）。undo() で1手、rewind(k) で k 手目を外す直前へ戻す。
-// クリアの後は戻せない。詰みからは戻せる。戻した回数は undos に数える（クリアの評価で使う）
+// クリアの後は戻せない。詰みからは戻せる。戻した回数は undos に数える
 export function createGame(level, isBlocked = blockerFor(level), stuckBlocker = isBlocked) {
   let state = newGame(level);
   let current = status(state, stuckBlocker);
+  let hints = 0;
+  let safe = null;
   let history = [];   // [{ state: 外す直前の状態, screw: 外したねじ }]
   let undos = 0;
   const api = {
     get state() { return state; },
     get status() { return current; },
+    get hints() { return hints; },
     // 外した手の数（戻せる手の数）
     get moves() { return history.length; },
     get history() { return history.map((h) => h.state); },
@@ -50,9 +57,17 @@ export function createGame(level, isBlocked = blockerFor(level), stuckBlocker = 
     undo() { return api.rewind(history.length - 1); },
     // 今外せるねじの id
     legal() { return legalMoves(state, isBlocked); },
+    hint(prefer = []) {
+      if (current !== 'playing') return { screw: null, reason: 'over' };
+      safe ??= safeBlocker(level);
+      const r = findHint(level, state, safe, { prefer });
+      if (r.screw) hints++;
+      return r;
+    },
     restart() {
       state = newGame(level);
       current = status(state, stuckBlocker);
+      hints = 0;
       history = [];
       undos = 0;
     },
