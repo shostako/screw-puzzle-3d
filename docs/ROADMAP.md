@@ -143,7 +143,7 @@
 
 ## M9 Android アプリにする
 
-- [ ] 完了
+- [x] 完了（PR #11）
 
 やること
 
@@ -260,3 +260,10 @@ SPEC の「後回しでよいもの」。2D 版の README の該当ルールを�
 - 効果音と振動は `src/feedback.js`。合図の名前（unscrew / blocked / full / box / slot / boxFull / plate / cleared / stuck）ごとに振動の型と音の型の表がある。音は Web Audio の合成で、最初のタッチで鳴らせるようになる。設定のキーは `screw-puzzle-3d.sound`。
 - スクリーンショットの `SHOTS=size` は、小さめ 360×640・普通 390×844・大きめ 430×932 で、ステージ 7 と生成した箱の途中・クリアを撮り、HUD とボタンとねじが画面に収まっているか、中心から 26px ずれたタップで外れるか、「向きを戻す」で戻るか、音の設定が再読み込みで残るかを確かめる。CDP のタッチでドラッグした直後に間を空けずにボタンをタップすると、Chrome が click にしない（人の指ではありえない速さなので、スクリプトで 0.3 秒空けている）。
 
+### M9 で分かったこと
+
+- Android のプロジェクトは `android/`（Capacitor 8.5.2、`npx cap add android` の既定に、縦固定と振動の権限を足しただけ）。設定は `capacitor.config.json`（`webDir: dist`）。`npm run app:web` が build → `check-dist` → `npx cap sync android`、`npm run app:apk` がその後に `./gradlew assembleDebug`。
+- この作業環境では dl.google.com に出られず Android SDK が入らないので、APK はまだ一度も組み立てていない。手元の PC での作り方は README の「Android 版」。`maven.google.com` には出られるので、SDK さえあれば Gradle の依存は取れるはず（確かめてはいない）。
+- CI（`scripts/ci.sh`）は最後に `npx cap sync android` を流し、`test/android.test.js` が設定の食い違い（webDir、アプリ ID と名前、縦固定、振動の権限、安全域の CSS）を見張る。APK のビルドは CI でしていない（ワークフローの YAML を変えられず、SDK の取得も要るため）。
+- ネット無しの確かめは `npm run app:offline`（`scripts/offline-check.mjs`）。同梱するページを、127.0.0.1 以外の名前を引けなくしたヘッドレスの Chromium で開き、外部への要求 0 件、`.wasm` を `application/octet-stream` で返しても物理が読めること、仮に入れた `--safe-area-inset-*` の分だけ HUD とボタンが内側に寄ること、ステージ 1 をクリアまで進めて JS のエラーが無いことを確かめた。実機の WebView では確かめていない。
+- アイコンと起動画面は Capacitor の既定（青い X）のまま。差し替えるなら 2D 版の `scripts/android_res.py` の形で、立体の箱の絵から作る。

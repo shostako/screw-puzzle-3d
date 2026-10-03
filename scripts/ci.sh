@@ -15,4 +15,6 @@ fi
 bash scripts/build.sh
 # dist/ が外部 URL から読み込んでいないか（ネット無しの Android アプリでも動くように）
 node scripts/check-dist.mjs
+# Android のプロジェクトへ dist/ を写せるか（Capacitor の設定の検査。APK のビルドは Android SDK が要るのでここではしない）
+npx cap sync android
 echo "ci: ok"

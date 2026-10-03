@@ -45,7 +45,7 @@ button {
   top: 0;
   left: 0;
   right: 0;
-  padding: calc(env(safe-area-inset-top) + 10px) 14px 0;
+  padding: calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) + 10px) 14px 0;
   text-align: center;
   pointer-events: none;
   z-index: 1;
@@ -152,8 +152,8 @@ button {
 /* 画面の右下（親指の届く所）: 向きを戻す・音と振動 */
 #tools {
   position: fixed;
-  right: calc(env(safe-area-inset-right) + 14px);
-  bottom: calc(env(safe-area-inset-bottom) + 16px);
+  right: calc(var(--safe-area-inset-right, env(safe-area-inset-right, 0px)) + 14px);
+  bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 16px);
   display: flex;
   flex-direction: column;
   gap: 12px;
