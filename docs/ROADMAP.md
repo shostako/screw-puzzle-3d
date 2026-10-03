@@ -14,7 +14,7 @@
 
 ## M1 土台: 回せる立体がスマホで表示される
 
-- [ ] 完了
+- [x] 完了
 
 やること
 
@@ -171,3 +171,14 @@ SPEC の「後回しでよいもの」。2D 版の README の該当ルールを�
 ## 分かったこと
 
 各項目を終えたスレッドが、次の項目の役に立つことを書き足す。
+
+### M1 で分かったこと
+
+- 道具: three.js + Vite + Vitest（理由は DECISIONS.md）。`npm run build` で `dist/` に出る。`base: './'` なので Pages のサブパスでも Capacitor でもそのまま動く。
+- 指の判定は `src/gesture.js` の `createGesture()`。down/move/up/cancel に座標と時刻を渡すと `rotate` / `zoom` / `tap` の出来事を返す。M4 でねじを外すときは `tap` だけを使えば、ドラッグ中に外れることはない。
+- 回転の計算は `src/view.js`（three.js に依存しない）。立体の `quaternion` にカメラから見た軸の回転を左から掛けている（`premultiply`）。
+- 仮の立体は `src/placeholder.js`。M3・M4 で本物の盤面に置き換える。
+- スクリーンショット: `npm run build && npm run screenshot [-- 出力先]`。390×844（DPR 2）のタッチ端末として開き、CDP でタッチを送ってドラッグ・ピンチする。場面を足すときは `scripts/screenshot.mjs` の `shots` に追加する。描画の完了は `window.__app.rendered` で待つ。ヘッドレスの WebGL は `--use-angle=swiftshader` で描ける。
+- PR に貼るスクリーンショットは `docs/screenshots/<項目>/` に置いてコミットし、コミットの SHA 付きの URL で参照すると、ブランチが消えても表示が残る。
+- `scripts/ci.sh` は build の後に `scripts/check-dist.mjs` で `dist/` の外部 URL 参照（HTML の src/href、CSS の url/@import、JS の import()/fetch）を検査する。
+- favicon が無いとブラウザが `/favicon.ico` を取りに行き 404 になるので、`index.html` に `data:` の空アイコンを置いている。
