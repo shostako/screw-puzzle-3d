@@ -5,8 +5,9 @@
 //
 // 撮るもの:
 //   initial.png  開いた直後
-//   rotated.png  1本指で横にドラッグした後
-//   zoomed.png   2本指で広げた後
+//   removed.png  ねじを指でタップして2本外した後（箱とスロットへ）
+//   opened.png   右板のねじを外して板が落ち、横へ回して中の仕切りが見えるところ
+//   cleared.png  全部外してクリアの画面
 // 以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -80,10 +81,49 @@ async function pinch(cdp, center, fromGap, toGap, steps = 12) {
   await touch(cdp, 'touchEnd', []);
 }
 
+async function tap(cdp, [x, y]) {
+  await touch(cdp, 'touchStart', [[x, y]]);
+  await touch(cdp, 'touchEnd', []);
+}
+
+// ページの中でねじを外し、演出が終わるまで待つ
+async function removeInPage(page, ids) {
+  for (const id of ids) {
+    const reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
+    if (reason !== 'ok') throw new Error(`ねじ ${id} を外せなかった: ${reason}`);
+    await waitRendered(page);
+  }
+}
+
 const shots = [
   { name: 'initial', act: async () => {} },
-  { name: 'rotated', act: async (cdp) => drag(cdp, [120, 520], [300, 470]) },
-  { name: 'zoomed', act: async (cdp) => pinch(cdp, [195, 450], 80, 220) },
+  // 天板の赤いねじを指でタップして外す（箱へ入る）。続けて前板の緑（合う箱が無いので待機スロットへ）
+  { name: 'removed', act: async (cdp, page) => {
+    for (const id of ['t1', 'f1']) {
+      await tap(cdp, await page.evaluate((id) => window.__app.screenOf(id), id));
+      await waitRendered(page);
+      const where = await page.evaluate((id) => window.__app.game.state.where[id], id);
+      if (where === 'board') throw new Error(`タップでねじ ${id} が外れなかった`);
+    }
+    // 箱の中の仕切りのねじは隠れていて外せない
+    const reason = await page.evaluate(() => window.__app.tapScrew('p1'));
+    if (reason !== 'blocked') throw new Error(`隠れたねじ p1 が拒否されなかった: ${reason}`);
+    await waitRendered(page);
+  } },
+  // 右板のねじを2本とも外すと右板が落ち、中の仕切りのねじが見える
+  { name: 'opened', act: async (cdp, page) => {
+    await removeInPage(page, ['r1', 'r2']);
+    await drag(cdp, [300, 600], [220, 600]);
+  } },
+  // 外せるねじを順に外してクリアまで
+  { name: 'cleared', act: async (cdp, page) => {
+    for (;;) {
+      const [id] = await page.evaluate(() => window.__app.legal());
+      if (!id) break;
+      await removeInPage(page, [id]);
+    }
+    await page.waitForSelector('#overlay:not([hidden])');
+  } },
 ];
 
 const server = await serve();
@@ -108,7 +148,7 @@ try {
   const cdp = await context.newCDPSession(page);
   await mkdir(outDir, { recursive: true });
   for (const s of shots) {
-    await s.act(cdp);
+    await s.act(cdp, page);
     await waitRendered(page);
     const file = join(outDir, `${s.name}.png`);
     await page.screenshot({ path: file });
