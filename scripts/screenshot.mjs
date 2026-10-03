@@ -6,7 +6,9 @@
 // 撮るもの:
 //   initial.png  開いた直後
 //   removed.png  ねじを指でタップして2本外した後（箱とスロットへ）
-//   opened.png   右板のねじを外して板が落ち、横へ回して中の仕切りが見えるところ
+//   resting.png  札のねじを外し、落ちた札が天板の上で止まってねじを隠し続けるところ
+//   hanging.png  立体を倒して札を払い落とし、天板がねじ1本でぶら下がったところ
+//   falling.png  最後のねじを外して天板が落ちていく途中
 //   cleared.png  全部外してクリアの画面
 // 以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
@@ -110,16 +112,46 @@ const shots = [
     if (reason !== 'blocked') throw new Error(`隠れたねじ p1 が拒否されなかった: ${reason}`);
     await waitRendered(page);
   } },
-  // 右板のねじを2本とも外すと右板が落ち、中の仕切りのねじが見える
-  { name: 'opened', act: async (cdp, page) => {
-    await removeInPage(page, ['r1', 'r2']);
-    await drag(cdp, [300, 600], [220, 600]);
+  // 札 S のねじを2本続けて外すと、S は落ちて天板の上で止まり、天板のねじ t2 を隠し続ける
+  // （1本ずつ間を空けると、傾いた天板の上で S が s2 を軸に回ってから落ちる）
+  { name: 'resting', act: async (cdp, page) => {
+    const r = await page.evaluate(() => ['s1', 's2'].map((id) => window.__app.tapScrew(id)));
+    if (r.some((x) => x !== 'ok')) throw new Error(`札のねじを外せなかった: ${r}`);
+    await waitRendered(page);
+    const modes = await page.evaluate(() => window.__app.plateModes());
+    if (modes.S !== 'loose') throw new Error(`札 S が落ちていない: ${modes.S}`);
+    const reason = await page.evaluate(() => window.__app.tapScrew('t2'));
+    if (reason !== 'blocked') throw new Error(`止まった札に隠れた t2 が拒否されなかった: ${reason}`);
   } },
-  // 外せるねじを順に外してクリアまで
+  // 立体を倒すと S は滑り落ちて消える。天板のねじを t4 だけ残すと、天板は t4 を軸にぶら下がる
+  { name: 'hanging', act: async (cdp, page) => {
+    await page.evaluate(() => window.__app.view(1.1, -0.45, 0.3, 27));
+    await waitRendered(page);
+    const modes = await page.evaluate(() => window.__app.plateModes());
+    if (modes.S !== 'gone') throw new Error(`倒しても札 S が落ちない: ${modes.S}`);
+    await removeInPage(page, ['t2', 't3']);
+    const t = await page.evaluate(() => window.__app.plateModes().T);
+    if (t !== 'hanging') throw new Error(`天板がぶら下がっていない: ${t}`);
+  } },
+  // 最後の t4 を外すと天板が落ちる（落ちている途中を撮る）
+  { name: 'falling', wait: false, act: async (cdp, page) => {
+    await page.evaluate(() => window.__app.tapScrew('t4'));
+    await page.waitForTimeout(260);
+  } },
+  // 外せるねじを順に外してクリアまで。外せるねじが無ければ、立体の向きを変えて動く板を払い落とす
   { name: 'cleared', act: async (cdp, page) => {
+    const views = [[0.45, -0.6, 0], [0, 0, Math.PI / 2], [Math.PI / 2, 0, 0], [0, 0, -Math.PI / 2], [-Math.PI / 2, 0, 0], [Math.PI, 0, 0]];
+    let k = 0;
     for (;;) {
+      await waitRendered(page);
       const [id] = await page.evaluate(() => window.__app.legal());
-      if (!id) break;
+      if (!id) {
+        const status = await page.evaluate(() => window.__app.game.status);
+        if (status !== 'playing') break;
+        if (k >= 30) throw new Error('向きを変えても外せるねじが出てこない');
+        await page.evaluate((v) => window.__app.view(...v, 19), views[k++ % views.length]);
+        continue;
+      }
       await removeInPage(page, [id]);
     }
     await page.waitForSelector('#overlay:not([hidden])');
@@ -149,7 +181,7 @@ try {
   await mkdir(outDir, { recursive: true });
   for (const s of shots) {
     await s.act(cdp, page);
-    await waitRendered(page);
+    if (s.wait !== false) await waitRendered(page);
     const file = join(outDir, `${s.name}.png`);
     await page.screenshot({ path: file });
     console.log(`screenshot: ${file}`);

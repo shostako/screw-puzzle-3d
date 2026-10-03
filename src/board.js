@@ -110,10 +110,20 @@ export function coverMap(level) {
 
 // ルール（rules.js の removeScrew など）に渡す隠れ判定 isBlocked(screwId, state)。
 // 板は動かない前提（M3・M4）: 隠している板のどれかが落ちていなければ隠れている。ぶら下がった板もその場に残って隠し続ける。
-// 板が物理で動く M5 では、sweepHits に今の姿勢を渡す判定に差し替える。
+// 板が物理で動く M5 では、画面は physics.js の blocker()（今の姿勢で sweepHits）を使う。これは物理なしのテストと探索用に残す。
 export function blockerFor(level) {
   const covers = coverMap(level);
   return (id, st) => covers[id].some(p => plateState(st, p) !== 'fallen');
+}
+
+// 詰みを決めるための、楽観的な隠れ判定（M5）。固定の板（ねじ2本以上）だけが隠すとみなし、
+// ぶら下がった板や落ちた板は、立体を回せばどけられるかもしれないので数えない。
+// 自分の板がぶら下がっていれば、回せば向きが変わるので隠れていないとみなす。
+// 固定の板は動かないので、これで外せるねじが1本も無ければ、どう回しても外せない（本当の詰み）。
+export function fixedBlocker(level) {
+  const covers = coverMap(level);
+  const own = Object.fromEntries(level.screws.map(s => [s.id, s.plate]));
+  return (id, st) => plateState(st, own[id]) === 'fixed' && covers[id].some(p => plateState(st, p) === 'fixed');
 }
 
 // 盤面の形の検査。ねじが留めている板の表面の上にあり、抜ける向きが板の法線（外向き）になっているか、など
