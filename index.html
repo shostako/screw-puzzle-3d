@@ -13,7 +13,7 @@
 <header id="hud">
   <div id="bar">
     <span id="progress"></span>
-    <h1 id="title">ねじ外しパズル 3D</h1>
+    <h1><button id="mode-btn" type="button" aria-label="遊び方を選ぶ"><span id="title">ねじ外しパズル 3D</span><span id="subtitle" hidden></span></button></h1>
     <button id="restart" type="button" aria-label="やり直す">↻</button>
   </div>
   <div id="boxes"></div>
@@ -47,6 +47,20 @@
     <button id="back1" class="sub" type="button" hidden>1手戻す</button>
     <button id="resume" class="sub" type="button" hidden>このまま続ける</button>
     <button id="again" type="button">もう一度</button>
+  </div>
+</div>
+<div id="menu" hidden>
+  <div class="card">
+    <h2>遊び方</h2>
+    <button id="m-stage" class="pick" type="button"><b>ステージ</b><small id="m-stage-sub"></small></button>
+    <button id="m-daily" class="pick" type="button"><b>今日の1問</b><small id="m-daily-sub"></small></button>
+    <p class="m-head">おまかせ（毎回ちがう1問）</p>
+    <div class="m-diffs">
+      <button id="m-easy" type="button">やさしい</button>
+      <button id="m-normal" type="button">ふつう</button>
+      <button id="m-hard" type="button">むずかしい</button>
+    </div>
+    <button id="m-close" class="sub" type="button">閉じる</button>
   </div>
 </div>
 <script type="module" src="./src/main.js"></script>
