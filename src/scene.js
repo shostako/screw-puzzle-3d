@@ -35,6 +35,7 @@ export function buildBoard(level) {
   for (const s of level.screws) {
     const obj = screwObject(s, s.radius ?? level.screwRadius ?? SCREW_RADIUS);
     obj.userData.screwId = s.id;
+    obj.userData.radius = s.radius ?? level.screwRadius ?? SCREW_RADIUS;   // 頭の半径（外した印の大きさを合わせる）
     screws.set(s.id, obj);
     root.add(obj);
   }
