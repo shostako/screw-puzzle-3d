@@ -38,21 +38,38 @@ export function plateFrame(plate, pose = plate) {
   return { center: pose.position, u: column(m, 0), v: column(m, 1), n: column(m, 2) };
 }
 
-// 板の頂点（世界座標）。shrink だけ内側へ縮める（面内は輪郭の重心へ向けて、厚みは両面から）
+// 板の頂点（世界座標）。shrink だけ内側へ縮める（面内は輪郭の各辺を shrink だけ内側へ平行に動かし、厚みは両面から）。
+// 辺ごとに同じ幅で縮めるので、細長い板でも短い向きが縮み足りないことがない
 export function plateVertices(plate, pose = plate, shrink = 0) {
   const { center, u, v, n } = plateFrame(plate, pose);
-  const ol = outlineOf(plate);
-  const cx = ol.reduce((s, p) => s + p[0], 0) / ol.length, cy = ol.reduce((s, p) => s + p[1], 0) / ol.length;
+  const ol = shrink > 0 ? insetOutline(outlineOf(plate), shrink) : outlineOf(plate);
   const half = plate.thickness / 2 - shrink;
   const out = [];
-  for (const [x0, y0] of ol) {
-    const dx = x0 - cx, dy = y0 - cy, l = Math.hypot(dx, dy);
-    const k = l > 0 ? Math.max(0, 1 - shrink / l) : 0;
-    const x = cx + dx * k, y = cy + dy * k;
+  for (const [x, y] of ol) {
     const p = add(center, add(scale(u, x), scale(v, y)));
     out.push(add(p, scale(n, half)), add(p, scale(n, -half)));
   }
   return out;
+}
+
+// 凸多角形の各辺を d だけ内側へ平行に動かした多角形（頂点は隣り合う2辺の内向きの法線の和の向きへ動く）
+export function insetOutline(ol, d) {
+  let area = 0;
+  for (let i = 0; i < ol.length; i++) {
+    const a = ol[i], b = ol[(i + 1) % ol.length];
+    area += a[0] * b[1] - b[0] * a[1];
+  }
+  const sgn = area > 0 ? 1 : -1;   // 反時計回りなら辺の左が内側
+  const normal = (a, b) => {
+    const dx = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dx, dy);
+    return [(-dy / l) * sgn, (dx / l) * sgn];
+  };
+  return ol.map((p, i) => {
+    const prev = ol[(i - 1 + ol.length) % ol.length], next = ol[(i + 1) % ol.length];
+    const n1 = normal(prev, p), n2 = normal(p, next);
+    const k = d / (1 + n1[0] * n2[0] + n1[1] * n2[1]);
+    return [p[0] + (n1[0] + n2[0]) * k, p[1] + (n1[1] + n2[1]) * k];
+  });
 }
 
 const radiusOf = (level, screw) => screw.radius ?? level.screwRadius ?? SCREW_RADIUS;
