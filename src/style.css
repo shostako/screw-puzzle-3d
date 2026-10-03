@@ -232,6 +232,7 @@ button {
   stroke-linejoin: round;
   stroke-linecap: round;
 }
+#undo:disabled { opacity: 0.4; }
 #hint-btn svg { stroke: var(--accent); }
 #hint-btn:disabled { opacity: 0.6; }
 #sound .mute { display: none; }
@@ -311,7 +312,7 @@ button {
 }
 .card h2 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: 0.08em; }
 .card p { margin: 8px 0 18px; color: var(--ink-soft); font-size: 14px; }
-#again, #next {
+#again, #next, #rewind, #back1, #resume {
   display: block;
   margin: 0 auto;
   min-width: 180px;
@@ -325,9 +326,10 @@ button {
   box-shadow: 0 4px 0 #b07c00;
 }
 #overlay.cleared h2 { color: #d08a00; }
-#next[hidden] { display: none; }
+#next[hidden], #rewind[hidden], #back1[hidden], #resume[hidden] { display: none; }
+#rewind:disabled { opacity: 0.6; }
 /* 次へがあるときの「もう一度」は控えめに */
-#again.sub {
+#again.sub, #back1.sub, #resume.sub {
   margin-top: 10px;
   min-height: 40px;
   background: transparent;
@@ -336,6 +338,7 @@ button {
   font-size: 15px;
   font-weight: 400;
 }
+
 
 /* マスコット「ネジまる」（D3）。左下に立たせる。指の操作は下の盤面へ通す。
    終わりの画面（#overlay、z-index 3）より手前に出して、成功・失敗の動きが見えるようにする */

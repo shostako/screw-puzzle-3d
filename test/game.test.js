@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { createGame, hudOf, applyEvent } from '../src/game.js';
+import { createGame, hudOf, applyEvent, rewindPoint } from '../src/game.js';
+import { generateLevel } from '../src/generator.js';
+import { safeBlocker } from '../src/safe.js';
 import { nearestScrew } from '../src/pick.js';
 import { BOX_LEVEL } from '../src/levels/box.js';
 import { newGame, removeScrew, legalMoves } from '../src/rules.js';
@@ -122,3 +124,103 @@ describe('タップした位置からねじを選ぶ', () => {
     expect(nearestScrew([], 0, 0)).toBeNull();
   });
 });
+
+describe('戻る', () => {
+  it('1手ずつ戻すと、外す前の状態にそのまま戻る。始めより前へは戻れない', () => {
+    const g = createGame(BOX_LEVEL);
+    const seen = [g.state], ids = [];
+    for (let k = 0; k < 3; k++) {
+      const id = g.legal()[0];
+      expect(g.tap(id).reason).toBe('ok');
+      seen.push(g.state);
+      ids.push(id);
+    }
+    expect(g.moves).toBe(3);
+    expect(g.path).toEqual(ids);
+    expect(g.tap('p1').reason).toBe('blocked');   // 外せなかったタップは手に数えない
+    expect(g.moves).toBe(3);
+    for (let k = 2; k >= 0; k--) {
+      expect(g.undo()).toBe(true);
+      expect(g.state).toBe(seen[k]);
+      expect(g.moves).toBe(k);
+    }
+    expect(g.canUndo).toBe(false);
+    expect(g.undo()).toBe(false);
+    expect(g.state).toBe(seen[0]);
+    expect(g.undos).toBe(3);
+    // 戻した後に外し直せば、同じ状態になる
+    g.tap(ids[0]);
+    expect(g.state).toEqual(seen[1]);
+    g.restart();
+    expect(g.moves).toBe(0);
+    expect(g.undos).toBe(0);
+  });
+
+  it('rewind(k) は k 手目を外す直前へ一気に戻し、それより後の手は忘れる', () => {
+    const g = createGame(BOX_LEVEL);
+    const before = [];
+    for (let k = 0; k < 4; k++) {
+      before.push(g.state);
+      expect(g.tap(g.legal()[0]).reason).toBe('ok');
+    }
+    const first = g.path[0];
+    expect(g.rewind(1)).toBe(true);
+    expect(g.state).toBe(before[1]);
+    expect(g.path).toEqual([first]);
+    expect(g.rewind(5)).toBe(false);
+    expect(g.undos).toBe(1);
+  });
+
+  it('クリアの後は戻せない', () => {
+    const level = generateLevel(4);
+    const g = createGame(level, safeBlocker(level));
+    for (const id of level.meta.solution) g.tap(id);
+    expect(g.status).toBe('cleared');
+    expect(g.canUndo).toBe(false);
+    expect(g.undo()).toBe(false);
+    expect(g.status).toBe('cleared');
+  });
+
+  // 生成した盤面をでたらめに外して詰ませ、戻る先を探す。戻る先は詰みより前で、そこからの手順でクリアできる
+  it('詰みから、解ける手順が残っている局面へ戻せる（生成した盤面をでたらめに詰ませる）', () => {
+    let stuck = 0;
+    for (let seed = 1; seed <= 40 && stuck < 8; seed++) {
+      const level = generateLevel(seed);
+      const safe = safeBlocker(level);
+      const g = createGame(level, safe);
+      const r = rng(seed);
+      while (g.status === 'playing') {
+        const legal = g.legal();
+        g.tap(legal[Math.floor(r() * legal.length)]);
+      }
+      if (g.status !== 'stuck') continue;
+      stuck++;
+      // 1手戻せば遊べる状態に戻る（詰みの画面から「1手戻す」）
+      const last = g.state;
+      expect(g.undo()).toBe(true);
+      expect(g.status).toBe('playing');
+      g.tap(legalAgain(g, last));
+      expect(g.state.where).toEqual(last.where);
+      expect(g.status).toBe('stuck');
+
+      const states = [...g.history, g.state];
+      const { k, path } = rewindPoint(level, states, safe);
+      expect(k).toBeLessThan(states.length - 1);
+      expect(path).toBeTruthy();
+      // 手順どおりに外せばクリアになる
+      expect(g.rewind(k)).toBe(true);
+      for (const id of path) expect(g.tap(id).reason).toBe('ok');
+      expect(g.status).toBe('cleared');
+    }
+    expect(stuck).toBeGreaterThanOrEqual(3);
+  });
+});
+
+// 戻した後、詰みの直前の手を打ち直して、同じ詰みへ戻る（戻す前と同じ状態になることも確かめる）
+function legalAgain(g, last) {
+  for (const id of g.legal()) {
+    const r = removeScrew(g.state, id);
+    if (r.ok && JSON.stringify(r.state.where) === JSON.stringify(last.where)) return id;
+  }
+  throw new Error('詰みへ戻る手が無い');
+}

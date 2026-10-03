@@ -15,6 +15,8 @@
 //   const gone = ph.step()              // 1刻み進める。盤面の外へ落ちきった板の id の配列が返る
 //   ph.poses()                          // 動いている板の姿勢 { 板の id: { position, quaternion } }（sweepHits へそのまま渡せる）
 //   ph.blocker()                        // ルールに渡す隠れ判定（今の姿勢で調べる）
+//   const snap = ph.snapshot()          // 今の物理の状態を丸ごと写す（戻る用）
+//   ph.restore(snap)                    // 写した時の状態へ戻す。そこから同じ操作をすれば、写さずに続けたときと同じ姿勢になる
 
 import RAPIER from '@dimforge/rapier3d-deterministic-compat';
 import { sub, dot, length, eulerMatrix, quaternionMatrix, matrixQuaternion } from './geom.js';
@@ -72,7 +74,7 @@ function plateShape(plate) {
 
 // hangDamping はぶら下がった板の減衰（テストで、揺れ続ける板を作るために 0 にする）
 export function createPhysics(level, { gravity = GRAVITY, hangDamping = HANG_DAMPING } = {}) {
-  const world = new RAPIER.World({ x: 0, y: -gravity, z: 0 });
+  let world = new RAPIER.World({ x: 0, y: -gravity, z: 0 });
   world.timestep = STEP;
   const byId = new Map(level.plates.map((p) => [p.id, p]));
   const screws = new Map(level.screws.map((s) => [s.id, s]));
@@ -258,6 +260,38 @@ export function createPhysics(level, { gravity = GRAVITY, hangDamping = HANG_DAM
         const present = new Set(api.present());
         return sweepHits(level, id, { plates: level.plates.filter((p) => present.has(p.id)), poses: api.poses() }).length > 0;
       };
+    },
+
+    // 今の状態を写す。Rapier の世界は丸ごとバイト列に（板の速さ、軸、接触の状態まで）、
+    // 板の状態と落ち着きの数えはこちらで写す。体と軸は Rapier の番号（handle）で覚え、戻すときに引き直す
+    snapshot() {
+      return {
+        bytes: world.takeSnapshot(),
+        mode: [...mode],
+        bodies: [...bodies].map(([id, b]) => [id, b.handle]),
+        joints: [...joints].map(([id, j]) => [id, j.joint.handle, j.anchor.handle]),
+        quiet: [...quiet],
+        still: [...still].map(([id, ss]) => [id, ss.map((e) => e && { position: e.position.slice(), rotation: { ...e.rotation }, n: e.n })]),
+        restless,
+      };
+    },
+
+    restore(snap) {
+      world.free();
+      world = RAPIER.World.restoreSnapshot(snap.bytes);
+      world.timestep = STEP;
+      mode.clear();
+      for (const [id, m] of snap.mode) mode.set(id, m);
+      bodies.clear();
+      for (const [id, h] of snap.bodies) bodies.set(id, world.getRigidBody(h));
+      joints.clear();
+      for (const [id, jh, ah] of snap.joints) joints.set(id, { joint: world.getImpulseJoint(jh), anchor: world.getRigidBody(ah) });
+      quiet.clear();
+      for (const [id, n] of snap.quiet) quiet.set(id, n);
+      still.clear();
+      for (const [id, ss] of snap.still) still.set(id, ss.map((e) => e && { position: e.position.slice(), rotation: { ...e.rotation }, n: e.n }));
+      restless = snap.restless;
+      posesCache = null;
     },
 
     free() {

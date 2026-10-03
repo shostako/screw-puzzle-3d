@@ -3,6 +3,7 @@
 
 import { newGame, removeScrew, status, screwById, legalMoves, SLOT_COUNT } from './rules.js';
 import { blockerFor } from './board.js';
+import { solve } from './solve.js';
 import { safeBlocker } from './safe.js';
 import { findHint } from './hint.js';
 
@@ -13,24 +14,47 @@ import { findHint } from './hint.js';
 // 動かない板だけで判定する楽観的なもの（board.js の fixedBlocker）を渡す。省略すると isBlocked と同じ。
 // hint(prefer) は今の局面から解ける手順の最初のねじを返し（hint.js の findHint）、使った回数 hints を数える（クリアの評価で使う）。
 // prefer（画面で見えているねじ）から選べればそちらを優先する。探索の隠れ判定は安全側の見積もり（safe.js）。初めて使うときに作る
+//
+// 戻る: 外した手ごとに、外す直前の状態とねじを覚えている（history）。undo() で1手、rewind(k) で k 手目を外す直前へ戻す。
+// クリアの後は戻せない。詰みからは戻せる。戻した回数は undos に数える
 export function createGame(level, isBlocked = blockerFor(level), stuckBlocker = isBlocked) {
   let state = newGame(level);
   let current = status(state, stuckBlocker);
   let hints = 0;
   let safe = null;
-  return {
+  let history = [];   // [{ state: 外す直前の状態, screw: 外したねじ }]
+  let undos = 0;
+  const api = {
     get state() { return state; },
     get status() { return current; },
     get hints() { return hints; },
+    // 外した手の数（戻せる手の数）
+    get moves() { return history.length; },
+    get history() { return history.map((h) => h.state); },
+    // 外したねじの順番
+    get path() { return history.map((h) => h.screw); },
+    get undos() { return undos; },
+    get canUndo() { return history.length > 0 && current !== 'cleared'; },
     tap(id) {
       if (current !== 'playing') return { reason: 'over', events: [], status: current };
       const r = removeScrew(state, id, isBlocked);
       if (r.ok) {
+        history.push({ state, screw: id });
         state = r.state;
         current = status(state, stuckBlocker);
       }
       return { reason: r.reason, events: r.events, status: current };
     },
+    // k 手目（0 から数える）を外す直前へ戻す。戻せたら true
+    rewind(k) {
+      if (!api.canUndo || !(k >= 0 && k < history.length)) return false;
+      state = history[k].state;
+      history = history.slice(0, k);
+      current = status(state, stuckBlocker);
+      undos++;
+      return true;
+    },
+    undo() { return api.rewind(history.length - 1); },
     // 今外せるねじの id
     legal() { return legalMoves(state, isBlocked); },
     hint(prefer = []) {
@@ -42,10 +66,32 @@ export function createGame(level, isBlocked = blockerFor(level), stuckBlocker = 
     },
     restart() {
       state = newGame(level);
-      hints = 0;
       current = status(state, stuckBlocker);
+      hints = 0;
+      history = [];
+      undos = 0;
     },
   };
+  return api;
+}
+
+// 戻る先: 解ける手順が残っている一番新しい局面の番号（states[k]。states は始めから今までの局面）と、そこからの手順。
+// 解けるかは安全側の隠れ判定 safe（safe.js の safeBlocker）で探すので、見つかった手順は物理でも外せる。
+// 本当の分かれ目より手前になることがある。2D 版と同じく、最初の局面は解けるとみなし（生成のときに確かめてある）、
+// 最後の局面（詰み）は解けないとみなして、その間を二分法で詰める（探索は数回で済む）。
+// 打ち切り（budget）で答えが出なかった局面は解けないとみなす（戻る先が手前になるだけ）
+export function rewindPoint(level, states, safe, { budget = 3000 } = {}) {
+  const solvable = (k) => solve(level, safe, { budget, from: states[k] });
+  let lo = 0, hi = states.length - 1;
+  let path = null;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    const p = solvable(mid);
+    if (p) { lo = mid; path = p; }
+    else hi = mid;
+  }
+  if (!path) path = solvable(lo) || null;
+  return { k: lo, path };
 }
 
 // 画面の上に出す箱とスロットの形:
