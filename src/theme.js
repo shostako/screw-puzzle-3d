@@ -35,6 +35,10 @@ export const THEME = {
     pink: '#ffb8c8',
     pinkDeep: '#ff8ea6',
     spot: '#f6eef0',
+    // E7 の題材
+    steel: '#cdd5e0',
+    navy: '#8aa6e0',
+    red: '#ff9a8c',
   },
   // 丸めた箱と円柱（D4）。板より厚いので丸みを大きくする
   block: { corner: 0.5, bevel: 0.22 },
