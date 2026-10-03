@@ -67,6 +67,34 @@ button {
   letter-spacing: 0.05em;
   color: var(--ink);
 }
+/* 題名は押すと遊び方を選ぶ画面を開く（D6）。▾ で押せることを見せる */
+#mode-btn {
+  pointer-events: auto;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 44px;
+  justify-content: center;
+  padding: 2px 14px;
+  border: none;
+  border-radius: 22px;
+  background: transparent;
+  font: inherit;
+  letter-spacing: inherit;
+}
+#mode-btn:not(:disabled) #title::after {
+  content: " ▾";
+  font-size: 11px;
+  color: var(--ink-soft);
+}
+#mode-btn:disabled { cursor: default; }
+#subtitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+#subtitle[hidden] { display: none; }
 #progress {
   font-size: 13px;
   font-weight: 700;
@@ -386,3 +414,62 @@ button {
   font-variant-numeric: tabular-nums;
 }
 #end-score .new-best { color: #d08a00; font-weight: 800; }
+
+/* 遊び方を選ぶ画面（D6）: ステージ・今日の1問・おまかせ 3 段 */
+#menu {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(29, 36, 48, 0.35);
+  z-index: 5;
+  animation: fade 0.2s ease-out;
+}
+#menu[hidden] { display: none; }
+#menu .card { width: min(300px, calc(100vw - 48px)); box-sizing: border-box; }
+#menu h2 { font-size: 22px; margin-bottom: 14px; }
+#menu .pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  min-height: 56px;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 18px;
+  background: var(--accent);
+  color: #3a2a00;
+  box-shadow: 0 4px 0 #b07c00;
+}
+#menu .pick b { font-size: 17px; font-weight: 800; }
+#menu .pick small { font-size: 12px; opacity: 0.8; font-variant-numeric: tabular-nums; }
+#menu #m-daily { background: #7cc8ff; color: #0d3150; box-shadow: 0 4px 0 #3c86c0; }
+#menu .m-head { margin: 8px 0 8px; font-size: 13px; font-weight: 700; }
+#menu .m-diffs { display: flex; gap: 6px; }
+#menu .m-diffs button {
+  flex: 1;
+  min-height: 48px;
+  padding: 0 2px;
+  border-radius: 16px;
+  background: #fff;
+  border: 3px solid var(--d);
+  color: var(--ink);
+  font-size: 13px;
+  white-space: nowrap;
+  font-weight: 800;
+  box-shadow: 0 3px 0 color-mix(in srgb, var(--d) 60%, #1d2430);
+}
+#m-easy { --d: #6cc56c; }
+#m-normal { --d: #f0a830; }
+#m-hard { --d: #e8584f; }
+#m-close {
+  display: block;
+  margin: 12px auto 0;
+  min-height: 40px;
+  min-width: 120px;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 15px;
+}

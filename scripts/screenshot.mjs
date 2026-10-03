@@ -54,6 +54,14 @@
 //   hint.png          最初の局面でヒントを押し、外すねじに金色の輪が出たところ
 //   hint-midway.png   ヒントの手だけを8本外したあと、もう一度押したところ
 //   hint-cleared.png  ヒントの手だけでクリアした画面（使った回数を数えていることも確かめる）
+//   （ランダム、D6。保存の無い新しい端末として開き、題名を指でタップして遊び方を選ぶ）
+//   random-menu.png     遊び方を選ぶ画面（ステージ・今日の1問・おまかせ 3 段）
+//   random-hard.png     おまかせの「むずかしい」を選んで開いた直後（題名の下に #番号）
+//   random-cleared.png  手順どおりに外してクリアした画面（「次のおまかせ」）
+//   random-next.png     「次のおまかせ」で開いた次の1問（同じ難しさ、違う番号）
+//   daily.png / daily-cleared.png  今日の1問を開いた直後と、クリアした画面
+//   daily-menu-done.png  ステージへ戻ってから遊び方の画面を開いたところ（今日の1問がクリア済みと星）
+//   あわせて、?random=番号&diff= で同じ番号の盤面が開くこと、おまかせ・今日の1問のクリアでステージの到達が進まないことを確かめる
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -63,7 +71,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -824,6 +832,92 @@ async function ratingShots(context, errors, outside) {
   await context.close();
 }
 
+// ランダム（D6）。題名から遊び方を選び、おまかせと今日の1問を遊ぶ
+async function randomShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const save = async (name) => {
+    const path = join(outDir, `${name}.png`);
+    await page.screenshot({ path });
+    console.log(`screenshot: ${path}`);
+  };
+  const tapButton = async (sel) => {
+    const box = await page.locator(sel).boundingBox();
+    await tap(cdp, [box.x + box.width / 2, box.y + box.height / 2]);
+  };
+  const title = () => page.evaluate(() => [document.getElementById('title').textContent, document.getElementById('subtitle').textContent]);
+  const openMenu = async () => {
+    await tapButton('#mode-btn');
+    await page.waitForSelector('#menu:not([hidden])');
+    await page.waitForTimeout(300);
+  };
+  const loaded = (type) => page.waitForFunction((type) => window.__app.mode.type === type && window.__app.rendered, type, { timeout: SETTLE_MS });
+
+  await page.goto(url);
+  await waitRendered(page);
+  if (await page.evaluate(() => window.__app.stage) !== 1) throw new Error('新しい端末がステージ 1 から始まらない');
+  await openMenu();
+  await save('random-menu');
+
+  await tapButton('#m-hard');
+  await loaded('random');
+  await waitRendered(page);
+  const first = await page.evaluate(() => window.__app.mode);
+  const [t1, s1] = await title();
+  if (first.difficulty !== 'hard' || t1 !== 'おまかせ・むずかしい' || s1 !== `#${first.no}`) throw new Error(`おまかせの題名が合わない: ${t1} ${s1} ${JSON.stringify(first)}`);
+  if (JSON.stringify(await page.evaluate(() => window.__app.level.random)) !== JSON.stringify({ no: first.no, difficulty: 'hard' })) throw new Error('おまかせの盤面の番号が合わない');
+  await save('random-hard');
+  await playSolution(page);
+  await page.waitForSelector('#overlay:not([hidden]) #next:not([hidden])');
+  if (await page.locator('#next').textContent() !== '次のおまかせ') throw new Error('おまかせのクリアで「次のおまかせ」が出ない');
+  await page.waitForTimeout(1400);
+  await save('random-cleared');
+  await tapButton('#next');
+  await page.waitForFunction((no) => window.__app.mode.type === 'random' && window.__app.mode.no !== no && window.__app.rendered, first.no, { timeout: SETTLE_MS });
+  const second = await page.evaluate(() => window.__app.mode);
+  if (second.difficulty !== 'hard') throw new Error('次のおまかせの難しさが変わった');
+  await save('random-next');
+
+  // 同じ番号は ?random= で開ける（同じ盤面）
+  const solution = await page.evaluate(() => window.__app.solution);
+  await page.goto(url + `?random=${second.no}&diff=hard`);
+  await waitRendered(page);
+  if (JSON.stringify(await page.evaluate(() => window.__app.solution)) !== JSON.stringify(solution)) throw new Error('?random= で同じ盤面が開かない');
+
+  // 今日の1問
+  await page.goto(url);
+  await waitRendered(page);
+  await openMenu();
+  if (!(await page.locator('#m-daily-sub').textContent()).endsWith('まだ')) throw new Error('今日の1問が始めからクリア済みになっている');
+  await tapButton('#m-daily');
+  await loaded('daily');
+  await waitRendered(page);
+  const [t2] = await title();
+  if (t2 !== '今日の1問') throw new Error(`今日の1問の題名が合わない: ${t2}`);
+  await save('daily');
+  await playSolution(page);
+  await page.waitForSelector('#overlay:not([hidden]) #next:not([hidden])');
+  await page.waitForTimeout(1400);
+  await save('daily-cleared');
+  const key = await page.evaluate(() => window.__app.mode.key);
+  const best = await page.evaluate((key) => JSON.parse(localStorage.getItem('screw-puzzle-3d.best'))?.[`daily-${key}`], key);
+  if (!best) throw new Error('今日の1問の自己ベストが保存されていない');
+  await tapButton('#next');
+  await loaded('stage');
+  await waitRendered(page);
+  // おまかせ・今日の1問をクリアしても、ステージの到達は進まない
+  if (await page.evaluate(() => window.__app.stage) !== 1) throw new Error('ステージの到達が進んでしまった');
+  await openMenu();
+  if (!(await page.locator('#m-daily-sub').textContent()).includes('クリア ★')) throw new Error('今日の1問がクリア済みにならない');
+  await save('daily-menu-done');
+  await tapButton('#m-close');
+  await page.waitForSelector('#menu', { state: 'hidden' });
+  await context.close();
+}
+
 // 戻る。生成した箱を手順どおりに途中まで外し、右下の「1手戻す」で2手戻して外し直すと同じ局面になること、
 // わざと待機スロットへ入れて詰ませ、詰みの画面の「1手戻す」と「解ける所まで戻る」が効くことを確かめる
 async function undoShots(context, errors, outside) {
@@ -981,6 +1075,7 @@ try {
   if (only('size')) await sizeShots(browser, errors, outside);
   if (only('undo')) await undoShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('rating')) await ratingShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('random')) await randomShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);
   if (errors.length) throw new Error(`ページでエラー: ${errors.join(' / ')}`);

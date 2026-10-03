@@ -14,14 +14,16 @@ import { generateLevel, ALL_KINDS } from './generator.js';
 import { BOX_LEVEL } from './levels/box.js';
 import { stageLevel, START_VIEW as START_EULER } from './stages.js';
 import { createProgress, deviceStorage } from './progress.js';
+import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, MAX_RANDOM, isRandomNo, dateKey, isDateKey, dateLabel, dailyBestKey } from './random.js';
 import { rate, clock, createPlayClock, createBests, MAX_STARS } from './rating.js';
 import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
 import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf } from './effects.js';
 
-// 既定はステージの進行（到達したステージから始める）。
+// 既定はステージの進行（到達したステージから始める）。題名を押すと遊び方を選ぶ画面（ステージ・今日の1問・おまかせ）が出る。
 // ?seed=番号（と &kind=box|shelf|table|car|house|animal）なら生成した盤面を1つだけ遊ぶ（進行は保存しない）。
 // ?level=box なら M3 の固定の箱（物理の確かめ用。進行は保存しない）。
 // ?stage=番号 ならそのステージから（確かめ用。クリアすれば進行は保存する）
+// ?random=番号（と &diff=easy|normal|hard）ならおまかせのその番号、?daily=20261003 なら今日の1問のその日（?daily だけなら今日）（D6）
 const query = new URLSearchParams(window.location.search);
 const freeSeed = Number.parseInt(query.get('seed') ?? '', 10);
 const fixedBox = query.get('level') === 'box';
@@ -31,14 +33,34 @@ const bests = createBests(freePlay ? null : deviceStorage());
 const askedStage = Number.parseInt(query.get('stage') ?? '', 10);
 let stage = Number.isInteger(askedStage) && askedStage >= 1 ? askedStage : progress.stage;
 
+// 今の遊び方: { type: 'stage' } / { type: 'daily', key: 日付の数 } / { type: 'random', no: 番号, difficulty } / { type: 'free' }
+const today = () => dateKey(new Date());
+function askedMode() {
+  if (freePlay) return { type: 'free' };
+  if (query.has('daily')) {
+    const key = Number.parseInt(query.get('daily'), 10);
+    return { type: 'daily', key: isDateKey(key) ? key : today() };
+  }
+  const no = Number.parseInt(query.get('random') ?? '', 10);
+  if (isRandomNo(no)) return { type: 'random', no, difficulty: DIFFICULTIES[query.get('diff')] ? query.get('diff') : 'normal' };
+  return { type: 'stage' };
+}
+let mode = askedMode();
+// おまかせの次の番号（端末の乱数で選ぶ。盤面は番号で決まる）
+const freshRandomNo = () => 1 + Math.floor(Math.random() * MAX_RANDOM);
+
 function levelFor() {
   if (fixedBox) return BOX_LEVEL;
   if (freePlay) {
     const kind = query.get('kind');
     return generateLevel(freeSeed, ALL_KINDS.includes(kind) ? { kind } : {});
   }
+  if (mode.type === 'daily') return dailyLevel(mode.key);
+  if (mode.type === 'random') return randomLevel(mode.no, mode.difficulty);
   return stageLevel(stage);
 }
+// 自己ベストを覚える名前（おまかせは 1 回きりなので覚えない）
+const bestKey = () => (mode.type === 'stage' ? stage : mode.type === 'daily' ? dailyBestKey(mode.key) : null);
 let LEVEL = levelFor();
 
 const $ = (id) => document.getElementById(id);
@@ -458,7 +480,7 @@ const countHint = () => { tally.hints++; };
 const countRewind = () => { tally.rewinds++; };
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) playClock.pause();
-  else if (game.status === 'playing' && !loading) playClock.resume();
+  else if (game.status === 'playing' && !loading && $('menu').hidden) playClock.resume();
 });
 
 let hud = hudOf(game.state);   // いま画面に出している箱とスロット（演出の途中の様子）
@@ -641,12 +663,17 @@ function showEnd(status) {
   seatMascot(true);
   cue(endCue(status));
   // クリアしたらその場で次のステージを保存する（ボタンを押す前に閉じても、次は続きから）
-  if (cleared && !freePlay) progress.cleared(stage);
-  $('end-title').textContent = cleared ? (freePlay ? 'クリア！' : `ステージ ${stage} クリア！`) : '詰み';
+  if (cleared && mode.type === 'stage') progress.cleared(stage);
+  $('end-title').textContent = !cleared ? '詰み'
+    : mode.type === 'stage' ? `ステージ ${stage} クリア！`
+    : mode.type === 'daily' ? '今日の1問 クリア！'
+    : 'クリア！';
   $('end-text').textContent = cleared ? 'すべての箱を埋めた' : '外せるねじが無くなった';
   showRating(cleared);
   const next = cleared && !freePlay;
   $('next').hidden = !next;
+  // ステージは次のステージへ、おまかせは同じ難しさの次の1問へ、今日の1問はステージの続きへ
+  $('next').textContent = mode.type === 'random' ? '次のおまかせ' : mode.type === 'daily' ? 'ステージの続きへ' : '次のステージへ';
   // 詰みからは、解ける所まで一気に戻すか、1手戻す
   showRewindButtons(!cleared);
   $('resume').hidden = true;
@@ -680,8 +707,8 @@ function showRating(cleared) {
   const lines = [`時間 ${clock(seconds)}（目安 ${clock(r.par)}）`];
   const used = [tally.hints && `ヒント ${tally.hints} 回`, tally.rewinds && `戻る ${tally.rewinds} 回`].filter(Boolean);
   if (used.length) lines.push(used.join('・'));
-  if (!freePlay) {
-    const b = bests.record(stage, { stars: r.stars, seconds });
+  if (bestKey() !== null) {
+    const b = bests.record(bestKey(), { stars: r.stars, seconds });
     lastRating.best = b;
     lines.push(b.improved
       ? (b.old ? '自己ベスト更新！' : '')
@@ -695,19 +722,33 @@ function showRating(cleared) {
   }));
 }
 
+// 題名（押すと遊び方を選ぶ画面）と、その下の小さな行
+function modeTitle(m = mode) {
+  if (fixedBox) return ['固定の箱', ''];
+  if (freePlay) return [`シード ${freeSeed}`, ''];
+  if (m.type === 'daily') return ['今日の1問', dateLabel(m.key)];
+  if (m.type === 'random') return [`おまかせ・${DIFFICULTIES[m.difficulty].label}`, `#${m.no}`];
+  return [`ステージ ${stage}`, ''];
+}
 function showStage() {
-  $('title').textContent = fixedBox ? '固定の箱' : freePlay ? `シード ${freeSeed}` : `ステージ ${stage}`;
+  const [title, sub] = modeTitle();
+  $('title').textContent = title;
+  $('subtitle').textContent = sub;
+  $('subtitle').hidden = !sub;
+  $('mode-btn').disabled = freePlay;
 }
 
-// 次のステージへ。盤面の生成に少しかかるので、先に表示を切り替えてから作る
+// 遊び方を切り替えて盤面を作る。盤面の生成に少しかかるので、先に表示を切り替えてから作る
 let loading = false;
-async function nextStage() {
+async function loadMode(next) {
   if (loading) return;
   loading = true;
-  stage++;
+  mode = next;
   $('overlay').hidden = true;
+  $('menu').hidden = true;
   showStage();
-  hint.textContent = `ステージ ${stage} を組み立て中…`;
+  playClock.pause();
+  hint.textContent = `${modeTitle().join(' ').trim()} を組み立て中…`;
   await wait(30);
   LEVEL = levelFor();
   newGameFor(LEVEL);
@@ -718,6 +759,39 @@ async function nextStage() {
   hint.textContent = '1本指で回す・ねじをタップで外す';
   loading = false;
   showUndo();
+}
+
+// クリアの画面の「次へ」
+function nextStage() {
+  if (mode.type === 'random') return loadMode({ type: 'random', no: freshRandomNo(), difficulty: mode.difficulty });
+  if (mode.type === 'stage') stage++;
+  else stage = progress.stage;
+  return loadMode({ type: 'stage' });
+}
+
+// ---- 遊び方を選ぶ画面（D6） ----
+
+function openMenu() {
+  if (freePlay || loading) return;
+  $('m-stage-sub').textContent = `ステージ ${progress.stage} から`;
+  const key = today();
+  const best = bests.get(dailyBestKey(key));
+  $('m-daily-sub').textContent = best
+    ? `${dateLabel(key)}・クリア ${'★'.repeat(best.stars)}${'☆'.repeat(MAX_STARS - best.stars)} ${clock(best.seconds)}`
+    : `${dateLabel(key)}・まだ`;
+  playClock.pause();
+  $('menu').hidden = false;
+}
+function closeMenu() {
+  $('menu').hidden = true;
+  if (game.status === 'playing' && !document.hidden) playClock.resume();
+}
+function pickMode(next) {
+  // 今遊んでいるものを選んだら、そのまま続ける
+  const same = next.type === mode.type && (next.type === 'stage' ? stage === progress.stage : next.type === 'daily' && next.key === mode.key);
+  if (same) return closeMenu();
+  if (next.type === 'stage') stage = progress.stage;
+  return loadMode(next);
 }
 
 // 演出を捨てて盤面を作り直す
@@ -962,6 +1036,11 @@ soundButton.addEventListener('click', () => {
 showSound();
 $('again').addEventListener('click', restart);
 $('next').addEventListener('click', nextStage);
+$('mode-btn').addEventListener('click', openMenu);
+$('m-close').addEventListener('click', closeMenu);
+$('m-stage').addEventListener('click', () => pickMode({ type: 'stage' }));
+$('m-daily').addEventListener('click', () => pickMode({ type: 'daily', key: today() }));
+for (const d of DIFFICULTY_IDS) $(`m-${d}`).addEventListener('click', () => pickMode({ type: 'random', no: freshRandomNo(), difficulty: d }));
 $('undo').addEventListener('click', undoOne);
 $('back1').addEventListener('click', undoOne);
 $('rewind').addEventListener('click', rewindToSolvable);
@@ -1036,7 +1115,10 @@ window.__app = {
   camera,
   startQuaternion: new THREE.Quaternion().setFromEuler(START_VIEW).toArray(),
   get game() { return game; },
-  get stage() { return freePlay ? null : stage; },
+  get stage() { return mode.type === 'stage' ? stage : null; },
+  get mode() { return { ...mode }; },
+  openMenu,
+  loadMode,
   get rendered() { return !loading && !needsRender && !tweens.size && !playing && !physics?.moving(); },
   // rendered が false の理由（スクリーンショットのスクリプトが待ちきれなかったとき用）
   why: () => ({ loading, needsRender, tweens: tweens.size, playing, moving: physics?.moving(), modes: window.__app.plateModes() }),

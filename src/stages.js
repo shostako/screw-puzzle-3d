@@ -71,17 +71,17 @@ export function stageConfig(n) {
 const SEED_TRIES = 40;
 const PREFER_TRIES = 3;
 
-// ステージ番号の盤面。条件を満たすまでシードを n * 1000 + 0, 1, 2 … と変える。
-// meta に stage と、使ったシードを持つ（?seed= で同じ盤面を開ける）
-export function stageLevel(n) {
-  const { want, prefer, minLayers, ...opts } = stageConfig(n);
-  const done = (level) => ({ ...level, meta: { ...level.meta, stage: n, opts } });
+// 設定 config（stageConfig の形）で盤面を1つ選ぶ。条件を満たすまでシードを seedAt(0), seedAt(1) … と変える。
+// 待機スロットの条件（prefer）は PREFER_TRIES 個のシードで見つからなければ外す。meta に extra と opts を足す
+// （D6 のおまかせ・今日の1問も同じ選び方を使う）
+export function pickLevel(config, seedAt, extra = {}) {
+  const { want, prefer, minLayers, ...opts } = config;
+  const done = (level) => ({ ...level, meta: { ...level.meta, ...extra, opts } });
   let last = null, ok = null;
   for (let t = 0; t < SEED_TRIES; t++) {
-    const seed = n * 1000 + t;
     let level;
     try {
-      level = generateLevel(seed, opts);
+      level = generateLevel(seedAt(t), opts);
     } catch {
       continue;
     }
@@ -93,5 +93,15 @@ export function stageLevel(n) {
   }
   // 条件に合う盤面が見つからなければ、最後に作れたものを使う（どれも解ける）
   if (ok || last) return done(ok ?? last);
-  throw new Error(`ステージ ${n} の盤面を作れなかった`);
+  throw new Error('盤面を作れなかった');
+}
+
+// ステージ番号の盤面。シードは n * 1000 + 0, 1, 2 …。
+// meta に stage と、使ったシードを持つ（?seed= で同じ盤面を開ける）
+export function stageLevel(n) {
+  try {
+    return pickLevel(stageConfig(n), (t) => n * 1000 + t, { stage: n });
+  } catch {
+    throw new Error(`ステージ ${n} の盤面を作れなかった`);
+  }
 }
