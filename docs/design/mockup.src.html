@@ -1,0 +1,540 @@
+<title>ネジ外し3D 見た目の案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;800&family=Zen+Kaku+Gothic+New:wght@400;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* レイアウト: 1カラムの読み物。立体のキャンバスを主役に、仕様は横（広い画面）か下（スマホ）に置く */
+:root{
+  --bg:#eef1f4; --surface:#ffffff; --ink:#1d2430; --muted:#5d6878; --line:#d5dbe3;
+  --accent:#e8a400; --accent-ink:#3a2a00; --chip:#e4e9ef;
+  --f-display:"M PLUS Rounded 1c","Hiragino Maru Gothic ProN","Yu Gothic",sans-serif;
+  --f-body:"Zen Kaku Gothic New","Hiragino Sans","Yu Gothic",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#141922; --surface:#1d2430; --ink:#e8edf3; --muted:#9aa6b6; --line:#2e3846;
+  --accent:#ffbf2e; --accent-ink:#2a1e00; --chip:#273141; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --bg:#141922; --surface:#1d2430; --ink:#e8edf3; --muted:#9aa6b6; --line:#2e3846;
+  --accent:#ffbf2e; --accent-ink:#2a1e00; --chip:#273141; color-scheme:dark }
+body{background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:15px;line-height:1.75}
+.wrap{max-width:1080px;margin:0 auto;padding-inline:16px;padding-block:28px 64px;display:flex;flex-direction:column;gap:44px}
+h1,h2,h3{font-family:var(--f-display);font-weight:800;line-height:1.3;text-wrap:balance;margin:0}
+h1{font-size:clamp(26px,5vw,38px)}
+h2{font-size:22px;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+h3{font-size:18px}
+p{margin:0;max-width:68ch}
+.eyebrow{font-family:var(--f-mono);font-size:12px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+.lead{color:var(--muted)}
+section{display:flex;flex-direction:column;gap:16px}
+.tag{font-family:var(--f-mono);font-size:12px;background:var(--accent);color:var(--accent-ink);padding:1px 8px;border-radius:4px;font-weight:500}
+ul.plain{margin:0;padding-left:1.2em;display:flex;flex-direction:column;gap:4px;max-width:72ch}
+a{color:inherit;text-decoration-color:var(--accent);text-underline-offset:3px}
+
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;display:grid;grid-template-columns:1fr;min-width:0}
+@media (min-width:900px){.card.split{grid-template-columns:minmax(0,1.5fr) minmax(0,1fr)}}
+.stage{position:relative;aspect-ratio:4/5;max-height:640px;width:100%;touch-action:none;cursor:grab;min-width:0}
+.stage.wide{aspect-ratio:16/9}
+@media (max-width:899px){.stage.wide{aspect-ratio:4/3}}
+.stage.sq{aspect-ratio:1/1}
+.stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+.hud{position:absolute;left:0;right:0;top:0;padding:12px;display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none}
+.boxes{display:flex;gap:10px}
+.cbox{display:flex;gap:5px;padding:6px 8px;background:#fff;border-radius:14px;box-shadow:0 4px 0 rgba(0,0,0,.15)}
+.hole{width:18px;height:18px;border-radius:50%;box-shadow:inset 0 3px 0 rgba(0,0,0,.18)}
+.slots{display:flex;gap:5px;padding:5px 7px;background:rgba(255,255,255,.7);border-radius:12px}
+.slot{width:20px;height:20px;border-radius:6px;display:grid;place-items:center;background:#e9eef5}
+.slot i{width:13px;height:13px;border-radius:50%;display:block}
+.stage-tools{position:absolute;right:10px;bottom:10px;left:10px;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.btn{font-family:var(--f-display);font-weight:800;font-size:14px;border:0;border-radius:999px;padding:10px 16px;min-height:44px;cursor:pointer;background:var(--accent);color:var(--accent-ink)}
+.btn.ghost{background:#1d2430;color:#fff}
+.btn:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+.spec{padding:16px 18px 20px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.spec dl{display:grid;grid-template-columns:5.5em 1fr;gap:4px 12px;margin:0;font-size:14px}
+.spec dt{color:var(--muted)}
+.spec dd{margin:0;min-width:0}
+.note{font-size:13px;color:var(--muted);line-height:1.65}
+
+.plan{display:grid;grid-template-columns:1fr;gap:16px}
+@media (min-width:900px){.plan{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 18px;display:flex;flex-direction:column;gap:10px;min-width:0}
+table{border-collapse:collapse;width:100%;font-size:14px}
+.tablewrap{overflow-x:auto}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--f-display);font-weight:800;font-size:13px;color:var(--muted);white-space:nowrap}
+td:first-child{white-space:nowrap;font-weight:700}
+ol.steps{margin:0;padding-left:1.4em;display:flex;flex-direction:column;gap:6px;font-size:14px}
+code{font-family:var(--f-mono);font-size:.88em;background:var(--chip);padding:1px 5px;border-radius:4px}
+details{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+summary{cursor:pointer;font-family:var(--f-display);font-weight:800}
+details[open] summary{margin-bottom:8px}
+.ask{background:var(--surface);border:2px solid var(--accent);border-radius:14px;padding:18px 20px;display:flex;flex-direction:column;gap:10px}
+.sources{font-size:13px;color:var(--muted)}
+.sources ul{margin:0;padding-left:1.2em}
+.state{position:absolute;left:12px;top:12px;font-family:var(--f-mono);font-size:12px;background:rgba(255,255,255,.85);color:#1d2430;padding:2px 8px;border-radius:6px}
+</style>
+
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:10px">
+    <div class="eyebrow">screw-puzzle-3d · デザイン提案 v3 · 2026-10-03</div>
+    <h1>ネジ外し3D 見た目の案</h1>
+    <p class="lead">A おもちゃブロック調をベースに、ねじを六角穴付きボルト（キャップボルト）にしました。盤面は今の生成器が作った実際のステージです。指で回せます。</p>
+  </header>
+
+  <section>
+    <h2>盤面 <span class="tag">A ベース</span></h2>
+    <div class="card">
+      <div class="stage wide" id="st-board">
+        <canvas></canvas>
+        <div class="hud"></div>
+        <div class="stage-tools"><button class="btn ghost" data-act="kind">本棚に替える</button><button class="btn" data-act="go">分解してみる</button></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>ねじ：カラーのキャップボルト</h2>
+    <div class="card split">
+      <div class="stage wide" id="st-bolt"><canvas></canvas></div>
+      <div class="spec">
+        <h3>六角穴付きボルト風</h3>
+        <dl>
+          <dt>頭</dt><dd>円筒頭。頭の径はねじ径の約1.5倍、頭の高さはねじ径とほぼ同じ（JIS B 1176 の比率に寄せた）</dd>
+          <dt>側面</dt><dd>ローレット（縦の細かい溝）。上の角は面取り</dd>
+          <dt>穴</dt><dd>六角穴。底は暗くして、どの向きからでも穴だと分かるように</dd>
+          <dt>色</dt><dd>アルマイト調のカラー。金属の映り込みは残しつつ、色ははっきり出す</dd>
+          <dt>外すとき</dt><dd>六角レンチで回すように頭が回り、ねじ部が抜けてから箱へ飛ぶ</dd>
+        </dl>
+        <p class="note">いまの丸頭（半径 0.3）と当たり判定の大きさは同じにして、見た目だけ替えます。ルールと生成器には触りません。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>マスコット：ネジまる（立体版） <span class="tag">見本から作り直し</span></h2>
+    <div class="card split">
+      <div class="stage sq" id="st-mascot"><canvas></canvas><span class="state" id="mstate">待機</span>
+        <div class="stage-tools"><button class="btn ghost" data-ms="idle">待機</button><button class="btn" data-ms="win">成功</button><button class="btn ghost" data-ms="lose">失敗</button></div>
+      </div>
+      <div class="spec">
+        <h3>キャップボルトの子</h3>
+        <dl>
+          <dt>見本</dt><dd>Codex（ChatGPT の枠）で作った4枚の絵を下敷きに、立体に起こした</dd>
+          <dt>頭</dt><dd>金色アルマイトのキャップボルト頭。縦のローレット、面取り、深い六角穴</dd>
+          <dt>顔</dt><dd>茶色の瞳の大きな目、太めの眉、口を開けた笑顔、ピンクのほっぺ</dd>
+          <dt>体</dt><dd>銀のねじ部が胴。白いソフビの腕と手袋、銀の脚、青い靴に白い靴底</dd>
+          <dt>成功</dt><dd>^ ^ の目でバンザイして回転ジャンプ、紙ふぶき</dd>
+          <dt>失敗</dt><dd>× の目とへの字口、頭を傾けて汗、レンチを下げる</dd>
+        </dl>
+        <p class="note">three.js の基本形の組み合わせで、外部の読み込みはありません。そのままアプリに入れられます。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>造形と、層を踏まえたねじの置き方</h2>
+    <div class="plan">
+      <div class="panel">
+        <h3>層の約束</h3>
+        <div class="tablewrap"><table>
+          <tr><th>層</th><th>ねじ</th><th>置き方</th></tr>
+          <tr><td>0 装飾</td><td>1〜2</td><td>1本で留めてぶら下げ、下のねじを隠す</td></tr>
+          <tr><td>1 外板</td><td>2〜4</td><td>四隅寄り・外向き。最初の向きで半分ほど見える</td></tr>
+          <tr><td>2 骨組み</td><td>2〜3</td><td>外板の陰か内向きの面。外板を1枚外すと届く</td></tr>
+          <tr><td>3 芯</td><td>3〜4</td><td>最後に残る板。どの外板からも隠れる位置</td></tr>
+        </table></div>
+        <p style="font-size:14px">層の番号は手で決めず、「その板のねじに届くまでに外す必要のある板の数」を今の安全側の隠れ判定（<code>safeBlocker</code>）で数えて決めます。</p>
+      </div>
+      <div class="panel">
+        <h3>生成の流れとランダム</h3>
+        <ol class="steps">
+          <li>題材ごとのテンプレート（車・家・動物など）で部品の木を組む。部品は板に加えて円柱や丸めた箱などの凸形。</li>
+          <li>層を数え、層ごとの本数と向きの表どおりにねじを置く。</li>
+          <li>今の <code>peelable</code> → <code>solve</code> → 色の割り当てで解けることを確かめる。</li>
+          <li>待機スロットを使う回数などで難しさを測り、ステージの条件に足す。</li>
+          <li>ランダムは「おまかせ」→「今日の1問」（日付がシード）→ 難しさをそろえる、の順。</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>進め方の案</h2>
+    <div class="tablewrap"><table>
+      <tr><th>項目</th><th>中身</th></tr>
+      <tr><td>D1 見た目の土台</td><td>A の材質・光・背景・HUD と、キャップボルトのねじ。テーマは1か所の表にまとめる</td></tr>
+      <tr><td>D2 分解の演出</td><td>ボルトが回って抜け、箱へ飛ぶ。板がはじけて落ちる。箱が満杯で閉じる</td></tr>
+      <tr><td>D3 マスコット</td><td>ネジまるの待機・成功・失敗・応援。ゲームの合図（<code>feedback.js</code> の名前）につなぐ</td></tr>
+      <tr><td>D4 部品の木と題材</td><td>凸形の部品を足し、車・家・動物のテンプレートを2〜3種</td></tr>
+      <tr><td>D5 層つきのねじ配置</td><td>層の計算と層ごとの約束。難しさの数値をステージ条件に</td></tr>
+      <tr><td>D6 ランダム</td><td>「おまかせ」と「今日の1問」</td></tr>
+    </table></div>
+  </section>
+
+  <div class="ask">
+    <h2>決めてほしいこと</h2>
+    <p><b>ネジまる</b>をこの形で決めてよいですか。よければ ROADMAP に D1〜D6 を足して、D1 から作り始めます。</p>
+  </div>
+
+  <details>
+    <summary>前回の調査（似たアプリの傾向）</summary>
+    <ul class="plain" style="font-size:14px">
+      <li>木の板＋派手な色のねじ。色はねじにだけ載せて、色合わせの対象をはっきりさせる。</li>
+      <li>層が重なった盤面（木の構造の上に金属板）。外側から外す順番がパズルになる。</li>
+      <li>題材は車・家・動物・立方体の塊。「どれも立方体」という不満レビューもある。</li>
+      <li>外れた部品が飛ぶ・落ちる気持ちよさと、クリック音・振動が評価されている。</li>
+      <li>調べた範囲ではマスコットを立てたものは見当たらない。</li>
+    </ul>
+    <div class="sources" style="margin-top:8px">
+      <ul>
+        <li><a href="https://apps.apple.com/us/app/screw-game-jam-puzzle-3d/id6744392799">Screw Game: Jam Puzzle 3D（App Store）</a></li>
+        <li><a href="https://www.iofreeonline.com/IOS/game/Screw-Jam.html">Screw Jam の解説</a></li>
+        <li><a href="https://play.google.com/store/apps/details?id=screw.puzzle.sort.nuts.bolts.unscrew.pin.jam.out.unlock.color">Screw Puzzle 3D（Google Play）</a></li>
+        <li><a href="https://apps.apple.com/us/app/unscrew-3d-pin-jam-puzzle/id6743380442">Unscrew 3D - Pin Jam Puzzle（App Store）</a></li>
+      </ul>
+    </div>
+  </details>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const LEVELS = __LEVELS__;
+const SC = {red:0xe0473a,blue:0x2f7fe0,yellow:0xf3b81f,green:0x3aae5a,purple:0x9354d6,cyan:0x22b3ad,orange:0xf07a22,pink:0xeb5c9c};
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const V3=(...a)=>new THREE.Vector3(...a);
+
+function canvasTex(w,h,draw){const c=document.createElement('canvas');c.width=w;c.height=h;draw(c.getContext('2d'),w,h);const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;return t;}
+function bgTex(stops){const t=canvasTex(4,256,(g,w,h)=>{const gr=g.createLinearGradient(0,0,0,h);stops.forEach(([o,c])=>gr.addColorStop(o,c));g.fillStyle=gr;g.fillRect(0,0,w,h);});return t;}
+function roundRect(w,h,r){
+  const s=new THREE.Shape(), x=-w/2, y=-h/2; r=Math.min(r,w/2-0.01,h/2-0.01);
+  s.moveTo(x+r,y); s.lineTo(x+w-r,y); s.quadraticCurveTo(x+w,y,x+w,y+r); s.lineTo(x+w,y+h-r);
+  s.quadraticCurveTo(x+w,y+h,x+w-r,y+h); s.lineTo(x+r,y+h); s.quadraticCurveTo(x,y+h,x,y+h-r);
+  s.lineTo(x,y+r); s.quadraticCurveTo(x,y,x+r,y); return s;
+}
+// 金属の映り込み用の簡単な環境（空のグラデーションと明るい窓）
+function makeEnv(renderer){
+  const s=new THREE.Scene();
+  const sky=new THREE.Mesh(new THREE.SphereGeometry(20,32,16),new THREE.MeshBasicMaterial({side:THREE.BackSide,map:bgTex([[0,'#ffffff'],[.45,'#cfe6ff'],[.55,'#8a97a8'],[1,'#3a4250']])}));
+  s.add(sky);
+  for(const [x,y,z,w,h] of [[8,8,4,8,4],[-9,5,-3,5,6],[0,10,-8,10,2]]){const m=new THREE.Mesh(new THREE.PlaneGeometry(w,h),new THREE.MeshBasicMaterial({color:0xffffff,side:THREE.DoubleSide}));m.position.set(x,y,z);m.lookAt(0,0,0);s.add(m);}
+  const pm=new THREE.PMREMGenerator(renderer); return pm.fromScene(s,.02).texture;
+}
+
+// ---- キャップボルト ----
+// 寸法は頭の半径 r を基準に: 頭の高さ ≈ ねじ径 ≈ 1.33r、六角穴の対辺 ≈ 0.55r
+const boltCache={};
+function boltGeoms(r){
+  const k='g'+r; if(boltCache[k]) return boltCache[k];
+  const h=1.15*r, N=36, amp=.028*r, steps=N*8;
+  const sh=new THREE.Shape();
+  for(let i=0;i<=steps;i++){const a=i/steps*Math.PI*2, rr=r-amp*(.5+.5*Math.cos(N*a)); const p=[Math.cos(a)*rr,Math.sin(a)*rr]; i?sh.lineTo(...p):sh.moveTo(...p);}
+  const hex=new THREE.Path(), hr=.42*r; for(let i=0;i<=6;i++){const a=i/6*Math.PI*2+Math.PI/6; const p=[Math.cos(a)*hr,Math.sin(a)*hr]; i?hex.lineTo(...p):hex.moveTo(...p);} sh.holes.push(hex);
+  const b=.07*r;
+  const head=new THREE.ExtrudeGeometry(sh,{depth:h-b,bevelEnabled:true,bevelThickness:b,bevelSize:b*.8,bevelSegments:2,curveSegments:1});
+  head.rotateX(-Math.PI/2); head.translate(0,0,0);
+  const sock=new THREE.CircleGeometry(hr,6,Math.PI/6); sock.rotateX(-Math.PI/2); sock.translate(0,h*.45,0);
+  const cone=new THREE.ConeGeometry(hr,hr*.5,6,1,true,Math.PI/6); cone.rotateX(Math.PI); cone.translate(0,h*.45+hr*.25,0);
+  const sd=.66*r, L=2.2*r;
+  const shaft=new THREE.CylinderGeometry(sd/2,sd/2,L,20); shaft.translate(0,-L/2,0);
+  // ねじ山: らせんの管
+  class Helix extends THREE.Curve{getPoint(t){const a=t*Math.PI*2*7;return V3(Math.cos(a)*sd/2,-t*L*.95-.02,Math.sin(a)*sd/2);}}
+  const thread=new THREE.TubeGeometry(new Helix(),140,.05*r,5,false);
+  return boltCache[k]={head,sock,cone,shaft,thread,h};
+}
+const metal=new THREE.MeshStandardMaterial({color:0xc4c9d0,metalness:.9,roughness:.32});
+const dark=new THREE.MeshStandardMaterial({color:0x15171b,roughness:.8,side:THREE.DoubleSide});
+const anoCache={};
+function anodized(c){return anoCache[c]||(anoCache[c]=new THREE.MeshPhysicalMaterial({color:c,metalness:.45,roughness:.32,clearcoat:.5,clearcoatRoughness:.25,envMapIntensity:.5}));}
+function capBolt(color,r=.36,withShaft=true){
+  const G=boltGeoms(r), g=new THREE.Group();
+  const head=new THREE.Mesh(G.head,anodized(SC[color]??color)); g.add(head);
+  g.add(new THREE.Mesh(G.sock,dark)); g.add(new THREE.Mesh(G.cone,dark));
+  if(withShaft){g.add(new THREE.Mesh(G.shaft,metal)); g.add(new THREE.Mesh(G.thread,metal));}
+  g.traverse(m=>{if(m.isMesh)m.castShadow=true;});
+  return g;
+}
+
+function plateOrder(level){
+  const rank=id=>/^label/.test(id)?0:/^(front|top)/.test(id)?1:/^(left|right)/.test(id)?2:/^(back|apron)/.test(id)?3:/^(shelf|inner|div)/.test(id)?4:/^bottom/.test(id)?5:6;
+  return level.plates.map(p=>p.id).sort((a,b)=>rank(a)-rank(b));
+}
+
+function baseView(stage,{bg,fov=32}){
+  const canvas=stage.querySelector('canvas');
+  const renderer=new THREE.WebGLRenderer({canvas,antialias:true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  renderer.shadowMap.enabled=true; renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  
+  const scene=new THREE.Scene(); scene.background=bgTex(bg); scene.environment=makeEnv(renderer);
+  const cam=new THREE.PerspectiveCamera(fov,1,.1,100);
+  scene.add(new THREE.HemisphereLight(0xeaf4ff,0x9a8f80,.45));
+  const sun=new THREE.DirectionalLight(0xffffff,.85); sun.position.set(6,12,8); sun.castShadow=true;
+  sun.shadow.mapSize.set(1024,1024); Object.assign(sun.shadow.camera,{left:-10,right:10,top:10,bottom:-10}); sun.shadow.bias=-.0005; scene.add(sun);
+  const rim=new THREE.DirectionalLight(0xbfe0ff,.6); rim.position.set(-8,5,-7); scene.add(rim);
+  function resize(){const r=stage.getBoundingClientRect();if(!r.width)return;renderer.setSize(r.width,r.height,false);cam.aspect=r.width/r.height;cam.updateProjectionMatrix();}
+  new ResizeObserver(resize).observe(stage); resize();
+  let visible=true; new IntersectionObserver(es=>{visible=es[0].isIntersecting;}).observe(stage);
+  const rot={x:-.35,y:.6,vy:reduced?0:.18,dist:22,target:V3()};
+  let drag=null;
+  stage.addEventListener('pointerdown',e=>{if(e.target.closest('button'))return;drag={x:e.clientX,y:e.clientY};stage.setPointerCapture(e.pointerId);});
+  stage.addEventListener('pointermove',e=>{if(!drag)return;rot.y+=(e.clientX-drag.x)*.01;rot.x=Math.max(-1.2,Math.min(.6,rot.x+(e.clientY-drag.y)*.01));drag={x:e.clientX,y:e.clientY};});
+  const end=()=>drag=null; stage.addEventListener('pointerup',end); stage.addEventListener('pointercancel',end);
+  function place(dt){
+    if(!drag) rot.y+=rot.vy*dt;
+    const d=rot.dist*(cam.aspect<1?1.25:1), t=rot.target;
+    cam.position.set(t.x+Math.sin(rot.y)*Math.cos(rot.x)*d,t.y-Math.sin(rot.x)*d,t.z+Math.cos(rot.y)*Math.cos(rot.x)*d);
+    cam.lookAt(t);
+  }
+  return {renderer,scene,cam,rot,place,isVisible:()=>visible};
+}
+
+// ---- 盤面 ----
+function boardView(stage){
+  const v=baseView(stage,{bg:[[0,'#9fd3ff'],[.65,'#e6f4ff'],[1,'#fff4d6']]});
+  const {scene,rot}=v;
+  const ground=new THREE.Mesh(new THREE.CircleGeometry(9,48),new THREE.MeshStandardMaterial({color:0xffffff,roughness:.9}));
+  ground.rotation.x=-Math.PI/2; ground.receiveShadow=true; scene.add(ground);
+  const plateCols=['#fbf8f1','#d2e8ff','#d4f3e0','#fff0c4','#ffe0d6','#e4ddff','#fbf8f1','#d2e8ff'];
+  const pivot=new THREE.Group(); scene.add(pivot);
+  const kinds=['box','shelf']; let ki=0, st=null;
+  function build(kind){
+    while(pivot.children.length) pivot.remove(pivot.children[0]);
+    const L=LEVELS[kind], plates=new Map(), screws=[], holder=new THREE.Group(); pivot.add(holder);
+    L.plates.forEach((p,i)=>{
+      const [w,h]=p.s,t=p.t,b=.07,dep=Math.max(.02,t-2*b);
+      const geo=new THREE.ExtrudeGeometry(roundRect(w-2*b,h-2*b,.35),{depth:dep,bevelEnabled:true,bevelThickness:b,bevelSize:b,bevelSegments:3,curveSegments:8});
+      geo.translate(0,0,-dep/2);
+      const mesh=new THREE.Mesh(geo,new THREE.MeshPhysicalMaterial({color:/^label/.test(p.id)?'#ffd0c2':plateCols[i%plateCols.length],roughness:.35,clearcoat:.7,clearcoatRoughness:.2,envMapIntensity:.4}));
+      mesh.castShadow=mesh.receiveShadow=true; mesh.position.set(...p.x); mesh.rotation.set(...p.r);
+      holder.add(mesh); plates.set(p.id,mesh);
+    });
+    for(const s of L.screws){
+      const o=capBolt(s.c,.33);
+      o.quaternion.setFromUnitVectors(V3(0,1,0),V3(...s.d).normalize());
+      o.position.set(...s.x).addScaledVector(V3(...s.d),-.15);
+      holder.add(o); screws.push({o,s});
+    }
+    const box=new THREE.Box3().setFromObject(holder); holder.position.y=-box.min.y+.02;
+    const c=new THREE.Box3().setFromObject(holder).getCenter(V3()); rot.target.set(0,c.y,0);
+    st={L,plates,screws,center:c,anim:[],busy:false};
+    hud(kind);
+  }
+  function hud(kind){
+    const L=LEVELS[kind], cols=[...new Set(L.screws.map(s=>s.c))], css=c=>'#'+SC[c].toString(16).padStart(6,'0');
+    const hole=(c,f)=>`<span class="hole" style="background:${f?css(c):'#e3e8ee'}"></span>`;
+    stage.querySelector('.hud').innerHTML=`<div class="boxes"><div class="cbox" style="outline:3px solid ${css(cols[0])};outline-offset:-3px">${hole(cols[0],1)+hole(cols[0],1)+hole(cols[0],0)}</div><div class="cbox" style="outline:3px solid ${css(cols[1])};outline-offset:-3px">${hole(cols[1],1)+hole(cols[1],0)+hole(cols[1],0)}</div></div><div class="slots">${[cols[2],cols[3]||cols[2],null,null,null].map(c=>`<span class="slot">${c?`<i style="background:${css(c)}"></i>`:''}</span>`).join('')}</div>`;
+  }
+  stage.querySelector('[data-act=go]').addEventListener('click',()=>{
+    if(!st||st.busy) return; st.busy=true; let t=0;
+    for(const pid of plateOrder(st.L)){
+      st.screws.filter(x=>x.s.p===pid).forEach(x=>{st.anim.push({kind:'screw',x,t0:t});t+=.2;});
+      st.anim.push({kind:'plate',pid,t0:t+.15}); t+=.45;
+    }
+    st.clock=0; st.end=t+1.6;
+  });
+  const kb=stage.querySelector('[data-act=kind]'), label={box:'箱',shelf:'本棚'};
+  kb.addEventListener('click',()=>{ki=(ki+1)%2;build(kinds[ki]);kb.textContent=label[kinds[(ki+1)%2]]+'に替える';});
+  build(kinds[0]);
+  return dt=>{
+    v.place(dt);
+    if(st.busy){
+      st.clock+=dt; const c=st.clock;
+      for(const a of st.anim){
+        const u=c-a.t0; if(u<0) continue;
+        if(a.kind==='screw'){
+          const o=a.x.o, d=V3(...a.x.s.d); if(!a.base) a.base=o.position.clone();
+          if(u<.5){o.position.copy(a.base).addScaledVector(d,u*1.6);o.rotateY(dt*20);}        // 回りながらねじ部が抜ける
+          else if(u<.95){const k=(u-.5)/.45;o.position.copy(a.base).addScaledVector(d,.8+k*3);o.position.y+=k*k*7;o.scale.setScalar(1-k*.9);}
+          else o.visible=false;
+        }else{
+          const m=st.plates.get(a.pid);
+          if(!a.v){const out=m.position.clone().sub(st.center).setY(0);if(out.lengthSq()<.01)out.set(0,0,1);out.normalize();a.v=out.multiplyScalar(4).setY(3.5);a.w=V3(Math.random()-.5,0,Math.random()-.5).multiplyScalar(5);}
+          if(u<1.4){a.v.y-=14*dt;m.position.addScaledVector(a.v,dt);m.rotation.x+=a.w.x*dt;m.rotation.z+=a.w.z*dt;}else m.visible=false;
+        }
+      }
+      if(c>st.end){st.busy=false;st.anim=[];build(kinds[ki]);}
+    }
+    if(v.isVisible()) v.renderer.render(v.scene,v.cam);
+  };
+}
+
+// ---- ボルトのアップ ----
+function boltView(stage){
+  const v=baseView(stage,{bg:[[0,'#dfeaf5'],[1,'#f7f9fc']],fov:28});
+  const {scene,rot}=v; rot.dist=7.2; rot.x=-.42; rot.vy=0; rot.target.set(0,.25,0);
+  const ground=new THREE.Mesh(new THREE.PlaneGeometry(30,30),new THREE.ShadowMaterial({opacity:.18})); ground.rotation.x=-Math.PI/2; ground.position.y=-.01; ground.receiveShadow=true; scene.add(ground);
+  const cols=['red','blue','yellow','green','purple','cyan','orange','pink'];
+  const bolts=cols.map((c,i)=>{
+    const b=capBolt(c,.36,i===2);
+    const a=i/cols.length*Math.PI*2; b.position.set(Math.cos(a)*1.9,0,Math.sin(a)*1.9);
+    if(i===2){b.position.set(0,1.9,0);b.rotation.z=.5;}  // 真ん中の1本はねじ部ごと見せる
+    scene.add(b); return b;
+  });
+  return dt=>{
+    v.place(dt);
+    if(!reduced){bolts.forEach((b,i)=>{b.rotation.y+=dt*(i===2?1.2:.5);});}
+    if(v.isVisible()) v.renderer.render(v.scene,v.cam);
+  };
+}
+
+// ---- マスコット ----
+// 見本画像（Codex で生成した4枚）に合わせた、ソフビ人形風の立体。
+// 寸法の目安: 靴 0〜0.35、脚 0.3〜0.8、ねじ部 0.75〜2.35、頭 2.3〜3.6（半径 0.95）
+function mascotView(stage){
+  const v=baseView(stage,{bg:[[0,'#fff1c9'],[.7,'#fff8e6'],[1,'#fffcf4']],fov:30});
+  const {scene,rot}=v; rot.dist=9.6; rot.x=-.12; rot.y=.3; rot.vy=0; rot.target.set(0,1.85,0);
+  const gold=new THREE.MeshPhysicalMaterial({color:0xffbf00,metalness:.55,roughness:.28,clearcoat:.6,clearcoatRoughness:.15,envMapIntensity:.9});
+  const steel=new THREE.MeshStandardMaterial({color:0xcfd2d6,metalness:.9,roughness:.3,envMapIntensity:.8});
+  const vinyl=new THREE.MeshPhysicalMaterial({color:0xf6f5f1,roughness:.35,clearcoat:1,clearcoatRoughness:.15});
+  const shoeM=new THREE.MeshPhysicalMaterial({color:0x1d5fd8,roughness:.3,clearcoat:1,clearcoatRoughness:.1});
+  const keyM=new THREE.MeshStandardMaterial({color:0x26282c,metalness:.7,roughness:.4});
+  const holeM=new THREE.MeshStandardMaterial({color:0x2b2d31,metalness:.6,roughness:.5,side:THREE.DoubleSide});
+  const inkM=new THREE.MeshStandardMaterial({color:0x1a1210,roughness:.4});
+  const eyeW=new THREE.MeshPhysicalMaterial({color:0xffffff,roughness:.15,clearcoat:1});
+  const irisM=new THREE.MeshPhysicalMaterial({color:0x3a1d0c,roughness:.2,clearcoat:1});
+  const irisLo=new THREE.MeshPhysicalMaterial({color:0x7d4a1e,roughness:.25,clearcoat:1});
+  const hiM=new THREE.MeshBasicMaterial({color:0xffffff});
+  const pinkM=new THREE.MeshStandardMaterial({color:0xff8fa3,roughness:.6});
+  const mouthM=new THREE.MeshStandardMaterial({color:0x5c1414,roughness:.5});
+  const tongueM=new THREE.MeshStandardMaterial({color:0xff7f9a,roughness:.5});
+  const sweatM=new THREE.MeshPhysicalMaterial({color:0x52b8ff,roughness:.1,clearcoat:1,transparent:true,opacity:.92});
+  const M=(g,m)=>{const o=new THREE.Mesh(g,m);o.castShadow=true;return o;};
+
+  const sh=new THREE.Mesh(new THREE.CircleGeometry(1.5,40),new THREE.MeshBasicMaterial({color:0x6b4a00,transparent:true,opacity:.13})); sh.rotation.x=-Math.PI/2; sh.position.y=.005; scene.add(sh);
+  const root=new THREE.Group(); scene.add(root);
+  const body=new THREE.Group(); root.add(body);
+
+  // 靴と脚（脚は銀）
+  const legs=[-1,1].map(s=>{
+    const g=new THREE.Group(); g.position.set(s*.27,.85,0); body.add(g); const o=new THREE.Group(); o.position.y=-.85; g.add(o);
+    const leg=M(new THREE.CylinderGeometry(.1,.1,.55,16),steel); leg.position.y=.6; o.add(leg);
+    const shoeG=new THREE.SphereGeometry(.3,28,18,0,Math.PI*2,0,Math.PI/2); shoeG.scale(1,.95,1.45);
+    const shoe=M(shoeG,shoeM); shoe.position.set(0,.09,.12); o.add(shoe);
+    const sole=M(new THREE.CylinderGeometry(.31,.31,.09,28),vinyl); sole.scale.set(1,1,1.47); sole.position.set(0,.045,.12); o.add(sole);
+    const cuff=M(new THREE.TorusGeometry(.13,.045,10,24),shoeM); cuff.rotation.x=Math.PI/2; cuff.position.y=.36; o.add(cuff);
+    return g;
+  });
+
+  // ねじ部（胴）
+  const shaft=M(new THREE.CylinderGeometry(.47,.47,1.6,32),steel); shaft.position.y=1.55; body.add(shaft);
+  class Helix extends THREE.Curve{getPoint(t){const a=t*Math.PI*2*7.5;return V3(Math.cos(a)*.47,2.25-t*1.4,Math.sin(a)*.47);}}
+  body.add(M(new THREE.TubeGeometry(new Helix(),300,.06,8,false),steel));
+
+  // 頭: 円筒頭＋面取り＋ローレット＋六角穴
+  const head=new THREE.Group(); head.position.y=2.3; body.add(head);
+  const R=.97, H=1.28, HEX=.56;
+  const prof=[[0,0],[R-.04,0],[R,.04],[R,H-.12],[R-.1,H],[.62,H]].map(([x,y])=>new THREE.Vector2(x,y));
+  head.add(M(new THREE.LatheGeometry(prof,64),gold));
+  const top=new THREE.Shape(); top.absarc(0,0,.63,0,Math.PI*2,false);
+  const hp=new THREE.Path(); for(let i=0;i<=6;i++){const a=i/6*Math.PI*2+Math.PI/6;const p=[Math.cos(a)*HEX,Math.sin(a)*HEX];i?hp.lineTo(...p):hp.moveTo(...p);} top.holes.push(hp);
+  const topG=new THREE.ShapeGeometry(top,32); topG.rotateX(-Math.PI/2); const topM=M(topG,gold); topM.position.y=H; head.add(topM);
+  const wall=new THREE.Mesh(new THREE.CylinderGeometry(HEX,HEX,.6,6,1,true,0),holeM); wall.position.y=H-.3; head.add(wall);
+  const floorG=new THREE.CircleGeometry(HEX,6,Math.PI/6); floorG.rotateX(-Math.PI/2); const floor=new THREE.Mesh(floorG,holeM); floor.position.y=H-.6; head.add(floor);
+  for(let i=0;i<84;i++){const a=i/84*Math.PI*2; const k=M(new THREE.BoxGeometry(.035,H-.32,.05),gold); k.position.set(Math.sin(a)*R,(H-.32)/2+.16,Math.cos(a)*R); k.rotation.y=a; head.add(k);}
+
+  // 顔: 頭の側面（円筒）に沿って貼る。phi は正面からの角度
+  const onHead=(o,phi,y,out=0)=>{const g=new THREE.Group();g.rotation.y=phi;o.position.set(0,y,R+.03+out);g.add(o);head.add(g);return o;};
+  const eyesOpen=new THREE.Group(), eyesHappy=new THREE.Group(), eyesX=new THREE.Group(); [eyesOpen,eyesHappy,eyesX].forEach(g=>head.add(g));
+  const eyeParts=[-1,1].map(s=>{
+    const e=new THREE.Group();
+    const D=(r,m,sx,sy,x,y,z,sz=.3)=>{const o=new THREE.Mesh(new THREE.SphereGeometry(r,28,18),m);o.scale.set(sx,sy,sz);o.position.set(x,y,z);e.add(o);return o;};
+    D(.2,eyeW,1,1.25,0,0,0);                                   // 白目
+    D(.182,irisM,1,1.22,0,-.008,.012);                            // 瞳（濃い茶）
+    D(.09,irisLo,1.25,.5,0,-.135,.026);                          // 瞳の下の明るい茶
+    D(.1,inkM,1,1.15,0,.005,.045);                               // 黒目
+    D(.062,hiM,1,1.1,.06,.085,.08,.4);                          // 大きなハイライト
+    D(.028,hiM,1,1,-.065,-.085,.08,.4);                            // 小さなハイライト
+    const lid=new THREE.Mesh(new THREE.TorusGeometry(.205,.022,8,28,Math.PI*.78),inkM); lid.scale.set(1,1.2,.5); lid.rotation.z=Math.PI*.11; lid.visible=false; lid.position.z=.03; e.add(lid);
+    
+    const g=new THREE.Group(); g.rotation.y=s*.34; e.position.set(0,.56,R+.02); e.scale.setScalar(1.22); g.add(e); eyesOpen.add(g); return e;});
+  [-1,1].forEach(s=>{const a=new THREE.Mesh(new THREE.TorusGeometry(.13,.035,10,24,Math.PI),inkM);const g=new THREE.Group();g.rotation.y=s*.4;a.position.set(0,.52,R+.05);a.scale.setScalar(1.3);g.add(a);eyesHappy.add(g);});
+  [-1,1].forEach(s=>{const g=new THREE.Group();g.rotation.y=s*.4;eyesX.add(g);for(const r of [.78,-.78]){const b=new THREE.Mesh(new THREE.BoxGeometry(.32,.075,.06),inkM);b.rotation.z=r;b.position.set(0,.6,R+.05);g.add(b);}});
+  const brows=[-1,1].map(s=>{const b=new THREE.Mesh(new THREE.TorusGeometry(.12,.025,8,20,Math.PI*.7),inkM);b.rotation.z=Math.PI*.15;onHead(b,s*.36,.93,.02);return b;});
+  [-1,1].forEach(s=>{const c=new THREE.Mesh(new THREE.SphereGeometry(.12,16,10),pinkM);c.scale.set(1.25,.8,.25);onHead(c,s*.66,.33,0);});
+  // 口
+  const mouthOpen=new THREE.Group(); onHead(mouthOpen,0,.32,.01);
+  const mo=new THREE.Mesh(new THREE.CircleGeometry(.15,28,Math.PI,Math.PI),mouthM); mouthOpen.add(mo);
+  const tg=new THREE.Mesh(new THREE.CircleGeometry(.08,20),tongueM); tg.scale.set(1.1,.7,1); tg.position.set(0,-.1,.005); mouthOpen.add(tg);
+  const lip=new THREE.Mesh(new THREE.TorusGeometry(.15,.018,6,24,Math.PI),inkM); lip.rotation.z=Math.PI; mouthOpen.add(lip);
+  const mouthSad=new THREE.Mesh(new THREE.TorusGeometry(.11,.025,8,20,Math.PI),inkM); onHead(mouthSad,0,.3,.02);
+  const sweat=new THREE.Group(); const sd=new THREE.Mesh(new THREE.SphereGeometry(.09,16,12),sweatM); sweat.add(sd); const st=new THREE.Mesh(new THREE.ConeGeometry(.085,.16,16),sweatM); st.position.y=.1; sweat.add(st); onHead(sweat,.78,.8,.05);
+
+  // 腕・手袋・六角レンチ
+  function glove(){
+    const g=new THREE.Group();
+    const palm=M(new THREE.SphereGeometry(.17,20,14),vinyl); palm.scale.set(1,1.1,.9); g.add(palm);
+    const th=M(new THREE.SphereGeometry(.07,12,10),vinyl); th.scale.set(1,1.6,1); th.position.set(.13,.06,.06); th.rotation.z=-.6; g.add(th);
+    const cuff=M(new THREE.TorusGeometry(.12,.045,10,20),vinyl); cuff.rotation.x=Math.PI/2; cuff.position.y=.17; g.add(cuff);
+    return g;
+  }
+  const arms=[-1,1].map(s=>{
+    const a=new THREE.Group(); a.position.set(s*.47,2.02,0); body.add(a);
+    const up=M(new THREE.CylinderGeometry(.085,.085,.62,14),vinyl); up.position.y=-.31; a.add(up);
+    const h=glove(); h.position.y=-.7; if(s>0)h.scale.x=-1; a.add(h);
+    return {a,h};
+  });
+  const key=new THREE.Group(); arms[0].h.add(key);
+  const k1=M(new THREE.CylinderGeometry(.055,.055,1.0,6),keyM); k1.position.y=.25; key.add(k1);
+  const k2=M(new THREE.CylinderGeometry(.055,.055,.38,6),keyM); k2.rotation.z=Math.PI/2; k2.position.set(.16,.75,0); key.add(k2);
+  const kn=M(new THREE.SphereGeometry(.055,8,6),keyM); kn.position.set(0,.75,0); key.add(kn);
+  key.position.set(0,.02,.05);
+
+  // 紙ふぶき
+  const conf=[], cc=Object.values(SC);
+  for(let i=0;i<46;i++){const m=new THREE.Mesh(new THREE.PlaneGeometry(.13,.08),new THREE.MeshBasicMaterial({color:cc[i%cc.length],side:THREE.DoubleSide}));m.visible=false;scene.add(m);conf.push({m,v:V3(),w:V3()});}
+
+  let state='idle', t0=0, clock=0;
+  const label={idle:'待機',win:'成功',lose:'失敗'};
+  function set(s){state=s;t0=clock;document.getElementById('mstate').textContent=label[s];
+    if(s==='win') conf.forEach(c=>{c.m.visible=true;c.m.position.set(0,3.8,0);c.v.set((Math.random()-.5)*6,3+Math.random()*4,(Math.random()-.5)*6);c.w.set(Math.random()*9,Math.random()*9,0);});
+  }
+  stage.querySelectorAll('[data-ms]').forEach(b=>b.addEventListener('click',()=>set(b.dataset.ms)));
+  const ease=k=>k<0?0:k>1?1:k*k*(3-2*k);
+  return dt=>{
+    clock+=dt; const u=clock-t0;
+    v.place(dt);
+    let y=0, ry=0, sq=1, sway=0, shake=0, headTilt=0, headSide=0, face='open';
+    // 腕の角度（z: 横に開く、x: 前へ出す）。既定は見本1枚目: 右手（画面左）でレンチを掲げる
+    let aR=[1.2,0.0,-.9], aL=[-0.25,0,0];   // [z, x, 肘ぶんの手首のひねり]
+    let legSwing=0;
+    if(state==='idle'){ y=Math.abs(Math.sin(clock*2.4))*.03; sq=1+Math.sin(clock*4.8)*.012; sway=Math.sin(clock*1.2)*.03; aR[0]+=Math.sin(clock*2.4)*.06; }
+    if(state==='win'){
+      face='happy';
+      const j=u%1.1, k=j/1.1;
+      y=Math.sin(Math.min(k,1)*Math.PI)*.45*(u<3.3?1:0);
+      ry=ease(Math.min(u/1.1,1))*Math.PI*2;
+      sq=k<.1?1-(.1-k)*1.2:1+Math.sin(k*Math.PI)*.04;
+      aR=[2.7,0,-.4]; aL=[-2.5,0,0]; legSwing=Math.sin(k*Math.PI)*.35;
+      if(u>3.6) set('idle');
+    }
+    if(state==='lose'){
+      face='x';
+      if(u<.6) shake=Math.sin(u*45)*.1*(1-u/.6);
+      const k=ease((u-.5)/.5);
+      headTilt=k*.2; headSide=-k*.18; sq=1-k*.05;
+      aR=[.15-k*.05,0,0]; aL=[-.12,0,0];
+      sweat.visible=u>.6; sweat.position.y=.8-((u-.6)%1.6)*.25;
+      if(u>4.2) set('idle');
+    }
+    if(state!=='lose') sweat.visible=false;
+    const blink=state==='idle'&&(clock%3.4)<.12;
+    eyesOpen.visible=face==='open'; eyesHappy.visible=face==='happy'; eyesX.visible=face==='x';
+    eyeParts.forEach(e=>e.scale.y=blink?.1:1);
+    mouthOpen.visible=face!=='x'; mouthOpen.scale.setScalar(face==='happy'?1.25:1); mouthSad.visible=face==='x';
+    brows.forEach((b,i)=>{b.rotation.z=Math.PI*.15+(face==='x'?(i?-.35:.35):0);});
+    root.position.y=y; root.rotation.y=ry; root.rotation.z=shake;
+    body.scale.set(1/Math.sqrt(sq),sq,1/Math.sqrt(sq)); body.rotation.z=sway;
+    head.rotation.x=headTilt; head.rotation.z=headSide;
+    arms[0].a.rotation.set(aR[1],0,-aR[0]); arms[0].h.rotation.z=aR[2]+0.0;   // 画面左＝キャラの右手
+    arms[1].a.rotation.set(aL[1],0,-aL[0]);
+    key.rotation.z=aR[0]-aR[2]-.15+(state==='lose'?2.9:0);
+    legs[0].rotation.x=legSwing; legs[1].rotation.x=-legSwing*.6;
+    conf.forEach(c=>{if(!c.m.visible)return;c.v.y-=9*dt;c.m.position.addScaledVector(c.v,dt);c.m.rotation.x+=c.w.x*dt;c.m.rotation.y+=c.w.y*dt;if(c.m.position.y<0)c.m.visible=false;});
+    if(v.isVisible()) v.renderer.render(v.scene,v.cam);
+  };
+}
+
+const steps=[boardView(document.getElementById('st-board')),boltView(document.getElementById('st-bolt')),mascotView(document.getElementById('st-mascot'))];
+let last=performance.now();
+function loop(now){const dt=Math.min(.05,(now-last)/1000);last=now;steps.forEach(f=>f(dt));requestAnimationFrame(loop);}
+requestAnimationFrame(loop);
+</script>
