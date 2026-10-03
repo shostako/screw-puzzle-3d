@@ -10,6 +10,8 @@
 //   resting.png  札のねじを外し、落ちた札が天板の上で止まってねじを隠し続けるところ
 //   hanging.png  立体を倒して札を払い落とし、天板がねじ1本でぶら下がったところ
 //   falling.png  最後のねじを外して天板が落ちていく途中
+//   pulling.png / flying.png / unscrewed.png  ねじ1本を外す途中: 抜ける向きに抜けているところ（pulling-zoom.png はその拡大）、箱かスロットへ飛んでいるところ、入った後。
+//                あわせて、立体のねじと飛ぶ印が同じフレームに両方出ない（外したねじは常に1本に見える）ことを確かめる
 //   cleared.png  全部外してクリアの画面
 //   gen-box.png / gen-shelf.png / gen-table.png  生成した盤面（?seed=番号&kind=種類）を開いた直後（M6）
 //   gen-midway.png / gen-cleared.png  生成した箱の盤面を、生成器が見つけた手順どおりに外していく途中と、クリアの画面
@@ -164,6 +166,45 @@ const shots = [
   { name: 'falling', wait: false, act: async (cdp, page) => {
     await page.evaluate(() => window.__app.tapScrew('t4'));
     await page.waitForTimeout(260);
+  } },
+  // ねじ1本を外す演出を毎フレーム記録しながら、抜けている途中を撮る
+  { name: 'pulling', wait: false, act: async (cdp, page) => {
+    await waitRendered(page);
+    const id = await page.evaluate(() => {
+      // 外せて、いまの向きで見えているねじ
+      const seen = new Set(window.__app.visibleScrews().map((s) => s.id));
+      const id = window.__app.legal().find((id) => seen.has(id));
+      if (!id) return null;
+      const trace = window.__trace = [];
+      const rec = () => {
+        trace.push({ shown: window.__app.screwShown(id), flyers: document.querySelectorAll('#flyers .flyer').length });
+        if (!window.__app.rendered || trace.length < 3) requestAnimationFrame(rec);
+      };
+      if (window.__app.tapScrew(id) !== 'ok') return null;
+      requestAnimationFrame(rec);
+      return id;
+    });
+    if (!id) throw new Error('外せるねじが無い');
+    // 抜けているねじの周りを拡大して残す（抜けはじめて数フレームの所）
+    await page.waitForFunction(() => window.__trace.length >= 3);
+    const [x, y] = await page.evaluate((id) => window.__app.screenOf(id), id);
+    const file = join(outDir, 'pulling-zoom.png');
+    await page.screenshot({ path: file, clip: { x: x - 90, y: y - 90, width: 180, height: 180 } });
+    console.log(`screenshot: ${file}`);
+  } },
+  { name: 'flying', wait: false, act: async (cdp, page) => {
+    await page.waitForSelector('#flyers .flyer');
+    await page.waitForTimeout(120);
+  } },
+  { name: 'unscrewed', act: async (cdp, page) => {
+    await waitRendered(page);
+    const trace = await page.evaluate(() => window.__trace);
+    const both = trace.filter((f) => f.shown && f.flyers > 0).length;
+    if (both) throw new Error(`外したねじが2本に見えたフレームがある: ${both} / ${trace.length}`);
+    if (!trace.some((f) => f.shown)) throw new Error('ねじが抜ける様子が出ていない');
+    if (!trace.some((f) => f.flyers > 0)) throw new Error('ねじが箱やスロットへ飛んでいない');
+    if (trace.at(-1).shown) throw new Error('外したねじが立体に残っている');
+    console.log(`ねじ1本の演出: 抜ける ${trace.filter((f) => f.shown).length} フレーム → 飛ぶ ${trace.filter((f) => f.flyers).length} フレーム（両方出たフレーム 0）`);
   } },
   // 外せるねじを順に外してクリアまで。外せるねじが無ければ、立体の向きを変えて動く板を払い落とす
   { name: 'cleared', act: async (cdp, page) => {
