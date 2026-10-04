@@ -363,56 +363,82 @@ export function frameCamera(camera, aspect) {
 }
 
 // 画面に出すネジまる。canvas に描き、clock()（ミリ秒、演出の時計）で動く。
-// 動いている間は毎フレーム、待機中は 1/idleEvery の間隔で描く（小さなキャンバスなので軽いが、待機は長いので電池を気にする）。
-// maxRatio は描く解像度の上限、idleEvery は待機中に何フレームに1回描くか（設定の画質で変える）
-export function createMascot(canvas, { clock = () => performance.now(), environment = null, maxRatio = 2, idleEvery = 2 } = {}) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
-  renderer.setClearColor(0x000000, 0);
+// 動いている間は毎フレーム、待機中は idleFps の間隔で描く（待機は長いので電池を気にする。
+// 画面の書き換えが 90・120Hz の端末でも同じ間隔になるよう、フレームの数でなく時間で間引く）。
+// maxRatio は描く解像度の上限、idleFps は待機中に 1 秒に何回描くか（設定の画質で変える）。
+// 描き手（WebGL の文脈・景色の焼き込み・形）は begin() で作る（E11）。最初の盤面を出すまでの重い準備から外すため。
+// それまでも合図（react / play）は受けて動きの状態は進めるので、作った時に今の動きから描き始める
+export function createMascot(canvas, { clock = () => performance.now(), environment = null, maxRatio = 2, idleFps = 30, onDraw = null } = {}) {
   const ratioFor = (max) => Math.min(max, window.devicePixelRatio || 1);
-  renderer.setPixelRatio(ratioFor(maxRatio));
   let enabled = true;   // 設定で隠したら描かない
-  const scene = new THREE.Scene();
-  const { hemi, sun, rim } = THEME.lights;
-  scene.add(new THREE.HemisphereLight(hemi.sky, hemi.ground, hemi.intensity));
-  for (const l of [sun, rim]) {
-    const light = new THREE.DirectionalLight(l.color, l.intensity);
-    light.position.set(...l.position);
-    scene.add(light);
-  }
-  if (environment) scene.environment = environment(renderer);
-  const camera = new THREE.PerspectiveCamera();
-  const { root, parts } = buildMascot();
-  scene.add(root);
   const state = createMascotState(clock());
   const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
   let forced = null;   // スクリーンショット用に姿勢を決め打ちする { action, t }
-  let frameNo = 0;
+  let gl = null;       // { renderer, scene, camera, parts }。begin() で作る
+  let looping = false;
+  let lastIdle = 0;
 
   function resize() {
     const r = canvas.getBoundingClientRect();
-    if (!r.width || !r.height) return;
-    renderer.setSize(r.width, r.height, false);
-    frameCamera(camera, r.width / r.height);
+    if (!gl || !r.width || !r.height) return;
+    gl.renderer.setSize(r.width, r.height, false);
+    frameCamera(gl.camera, r.width / r.height);
   }
-  // 置き場所（左下・終わりの画面のカード）で大きさが変わるので、キャンバスの大きさを見張る
-  if (globalThis.ResizeObserver) new ResizeObserver(resize).observe(canvas);
-  else window.addEventListener('resize', resize);
-  resize();
+
+  function begin() {
+    if (gl) return;
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'low-power' });
+    renderer.setClearColor(0x000000, 0);
+    renderer.setPixelRatio(ratioFor(maxRatio));
+    const scene = new THREE.Scene();
+    const { hemi, sun, rim } = THEME.lights;
+    scene.add(new THREE.HemisphereLight(hemi.sky, hemi.ground, hemi.intensity));
+    for (const l of [sun, rim]) {
+      const light = new THREE.DirectionalLight(l.color, l.intensity);
+      light.position.set(...l.position);
+      scene.add(light);
+    }
+    if (environment) scene.environment = environment(renderer);
+    const camera = new THREE.PerspectiveCamera();
+    const { root, parts } = buildMascot();
+    scene.add(root);
+    gl = { renderer, scene, camera, parts };
+    // 置き場所（左下・終わりの画面のカード）で大きさが変わるので、キャンバスの大きさを見張る
+    if (globalThis.ResizeObserver) new ResizeObserver(resize).observe(canvas);
+    else window.addEventListener('resize', resize);
+    resize();
+    draw();
+    wake();
+  }
 
   function draw() {
+    if (!gl) return;
     const now = clock();
     const cur = forced ?? state.current(now);
-    applyPose(parts, mascotPose(cur.action, cur.t, forced ? forced.t : now / 1000, still), FRAME.yaw * 0.6);
-    renderer.render(scene, camera);
+    applyPose(gl.parts, mascotPose(cur.action, cur.t, forced ? forced.t : now / 1000, still), FRAME.yaw * 0.6);
+    gl.renderer.render(gl.scene, gl.camera);
+    onDraw?.();
   }
-  function loop() {
+  // 隠している間は繰り返しを止める（出した時に wake で再開する）
+  function wake() {
+    if (looping || !gl || !enabled) return;
+    looping = true;
     requestAnimationFrame(loop);
-    if (!enabled) return;
+  }
+  function loop(t) {
+    if (!enabled) {
+      looping = false;
+      return;
+    }
+    requestAnimationFrame(loop);
     const { action } = state.current(clock());
-    if (action === 'idle' && !forced && frameNo++ % idleEvery) return;
+    if (action === 'idle' && !forced) {
+      // 少し早めに来たフレームも描く（60Hz で 30 回／秒なら 1 つおき）
+      if (t - lastIdle < 1000 / idleFps - 4) return;
+      lastIdle = t;
+    }
     draw();
   }
-  requestAnimationFrame(loop);
 
   const history = [];   // 見せた動きの名前（新しい 20 個）。スクリーンショットのスクリプトが合図とのつながりを確かめる
   const played = (ok, action) => {
@@ -429,11 +455,18 @@ export function createMascot(canvas, { clock = () => performance.now(), environm
     get action() { return state.current(clock()).action; },
     // 出す・隠す（隠している間は描かない。キャンバスの表示は呼ぶ側が CSS で切り替える）
     get enabled() { return enabled; },
-    set enabled(v) { enabled = !!v; },
-    // 画質: 解像度の上限と、待機中に何フレームに1回描くか
-    setQuality({ maxRatio: m = 2, idleEvery: k = 2 } = {}) {
-      idleEvery = Math.max(1, k);
-      renderer.setPixelRatio(ratioFor(m));
+    set enabled(v) {
+      enabled = !!v;
+      wake();
+    },
+    // 描き手を作って描き始める（最初の盤面を出した後に呼ぶ）。何度呼んでもよい
+    begin,
+    get begun() { return !!gl; },
+    // 画質: 解像度の上限と、待機中に 1 秒に何回描くか
+    setQuality({ maxRatio: m = 2, idleFps: f = 30 } = {}) {
+      idleFps = Math.max(1, f);
+      maxRatio = m;
+      gl?.renderer.setPixelRatio(ratioFor(m));
       resize();
     },
     // 姿勢を決め打ちする（null で戻す）。スクリーンショット用

@@ -83,7 +83,9 @@ describe('設定', () => {
     expect(QUALITIES.light.pixelRatios).toEqual([1]);
     expect(QUALITIES.light.knurl).toBe(false);
     expect(QUALITIES.auto.knurl).toBe(true);
-    expect(QUALITIES.light.idleEvery).toBeGreaterThan(QUALITIES.auto.idleEvery);
+    expect(QUALITIES.light.idleFps).toBeLessThan(QUALITIES.auto.idleFps);
+    expect(QUALITIES.light.blur).toBe(false);
+    expect(QUALITIES.auto.blur).toBe(true);
     for (const q of Object.values(QUALITIES)) expect(q.pixelRatios.every((r, i, a) => i === 0 || r < a[i - 1])).toBe(true);
   });
 });

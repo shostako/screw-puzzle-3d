@@ -22,10 +22,15 @@ import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, MAX_RANDOM, isRa
 import { rate, clock, createPlayClock, createBests, MAX_STARS } from './rating.js';
 import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
 import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf, pressDepth, releaseDepth, blockerFlash, chainStep, lidMark, sparkOf, rainDrops } from './effects.js';
+import { createPerf, mountPerfPanel, slowFrames } from './perf.js';
 import { TIPS, MIN_MS, MAX_MS, TURN_RAD, startTips, tapTips, labelScrews, createTutorialStore, tutorialEnabled } from './tutorial.js';
 
 // 起動の画面（E3）。物理の wasm を読む fetch を見張るので、物理の準備（start）より先に作る
 const boot = createBoot();
+performance.mark('e11:main');
+// 物理の wasm は、3D の準備より先に読み始める（E11。index.html の preload で読み始めている分をそのまま受け取る）。
+// 読む間に描き手を作り、景色を焼く。start() はこの読み込みの終わりを待つだけ
+initPhysics();
 
 // 既定はステージの進行（到達したステージから始める）。題名を押すと遊び方を選ぶ画面（ステージ・今日の1問・おまかせ）が出る。
 // ?seed=番号（と &kind=box|shelf|table|car|house|animal）なら生成した盤面を1つだけ遊ぶ（進行は保存しない）。
@@ -100,30 +105,44 @@ renderer.setClearColor(0x000000, 0);
 // 日の当たる淡い面が白く飛ばないよう、高い所だけを寝かせるトーンマップ（E2。theme.js の exposure）
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = THEME.exposure;
+// ?perf なら速さの計器を出す（E11。scripts/perf.mjs もこれを読む）
+const perf = query.has('perf') ? createPerf({ renderer }) : null;
+if (perf) mountPerfPanel(perf);
 
 // 描く解像度。DPR は 2 まで。動かしている間の1フレームが重ければ段階的に下げる（中級機で滑らかに動かすため）。
 // 下げた解像度はその回のあいだ保つ（上げ下げを繰り返すと画面がちらつく）。設定の画質「軽い」なら初めから 1
 let PIXEL_RATIOS = [];
 let pixelLevel = 0;
+let contactCut = false;   // 解像度を下げきってもまだ遅く、板の接する所の暗さを切った（E11）
 function usePixelRatios() {
   PIXEL_RATIOS = quality().pixelRatios.filter((r) => r <= Math.max(1, DPR));
   pixelLevel = 0;
+  contactCut = false;
   renderer.setPixelRatio(PIXEL_RATIOS[0]);
+  useBlur();
+}
+// 終わりのカードの幕のぼかし（E5）は、画質「軽い」か、自動で解像度を下げた（遅い端末と分かった）時は切る（E11）。
+// ぼかしは幕の後ろが変わるたび（雨・ネジまるの跳び・落ちる板）画面全体に掛け直すので、クリアの直後のフレームが倍ほど重くなる
+function useBlur() {
+  document.body.classList.toggle('no-blur', !quality().blur || pixelLevel > 0);
 }
 usePixelRatios();
-const SLOW_FRAME_MS = 24;   // 続けて描いたフレームの間隔の平均がこれを超えたら下げる（40fps を切る）
 const frameTimes = [];
 function watchFrameTime(now, last) {
-  if (!last || now - last > 100) { frameTimes.length = 0; return; }   // 止まっていた後の1フレームは数えない
-  frameTimes.push(now - last);
-  if (frameTimes.length < 40) return;
-  const avg = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
-  frameTimes.length = 0;
-  if (avg > SLOW_FRAME_MS && pixelLevel < PIXEL_RATIOS.length - 1) {
+  if (!slowFrames(frameTimes, last ? now - last : null)) return;
+  if (pixelLevel < PIXEL_RATIOS.length - 1) {
     renderer.setPixelRatio(PIXEL_RATIOS[++pixelLevel]);
+    useBlur();
     resize();
+  } else if (contactOn()) {
+    // 解像度を 1 まで下げてもまだ遅ければ、最後に板の接する所の暗さ（E2。1 画素ごとに近くの板を調べる）を切る（E11）
+    contactCut = true;
+    if (board) setContact(board, false);
+    requestRender();
   }
 }
+// 板の接する所の暗さを描くか: 画質の設定で入っていて、遅い端末として切っていない
+const contactOn = () => quality().contact && !contactCut;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
@@ -146,6 +165,7 @@ camera.position.set(0, 0, distance);
 }
 // 艶の映り込み。起動時に1回だけ、小さな空の景色を PMREM に焼いて全部の材質で使う
 scene.environment = bakeEnvironment(renderer);
+performance.mark('e11:env');
 
 // 立体はこの group ごと回す。盤面は中に作り直す（やり直し）
 const model = new THREE.Group();
@@ -1194,7 +1214,7 @@ function rebuildBoard() {
     model.remove(board.root);
     for (const p of board.plates.values()) if (p.parent === scene) scene.remove(p);
   }
-  board = buildBoard(LEVEL, { knurl: quality().knurl, contact: quality().contact, drives: settings.get('drives') });
+  board = buildBoard(LEVEL, { knurl: quality().knurl, contact: contactOn(), drives: settings.get('drives') });
   model.add(board.root);
   // 空とマットの色は盤面の種類で変え、ステージなら章の色みを重ねる（E2・E3。theme.js の skies と chapterTints）
   const sky = skyVariables(LEVEL.meta?.kind, LEVEL.meta?.sky);
@@ -1545,7 +1565,7 @@ function plateSize(id) {
 // マスコット「ネジまる」（D3）。左下の小さなキャンバスに別の描き手で描き、演出の時計で動く。
 // 合図（cue）を音と振動と同じ名前で受けて、成功・失敗・箱が満杯・外せないねじに反応する（音を切っていても動く）
 const mascot = createMascot($('mascot'), {
-  clock: fxClock, environment: bakeEnvironment, maxRatio: quality().mascotRatio, idleEvery: quality().idleEvery,
+  clock: fxClock, environment: bakeEnvironment, onDraw: perf ? () => perf.mascot() : null, maxRatio: quality().mascotRatio, idleFps: quality().idleFps,
 });
 function cue(name, opts) {
   feedback.cue(name, opts);
@@ -1725,9 +1745,9 @@ function applySetting(name, value) {
     resize();
     if (board) {
       setKnurl(board, quality().knurl);
-      setContact(board, quality().contact);
+      setContact(board, contactOn());
     }
-    mascot.setQuality({ maxRatio: quality().mascotRatio, idleEvery: quality().idleEvery });
+    mascot.setQuality({ maxRatio: quality().mascotRatio, idleFps: quality().idleFps });
     requestRender();
   } else if (name === 'mascot') {
     mascot.enabled = value;
@@ -1848,7 +1868,9 @@ function frame(now) {
   }
   if (needsRender) {
     needsRender = false;
+    const t0 = perf ? performance.now() : 0;
     renderer.render(scene, camera);
+    perf?.frame(now, performance.now() - t0);
     if (coachTip) placeHand();
     watchFrameTime(now, lastDraw);
     lastDraw = now;
@@ -1863,7 +1885,9 @@ function frame(now) {
 let wasMoving = false;
 
 async function start() {
+  performance.mark('e11:physics-start');
   await initPhysics();
+  performance.mark('e11:physics');
   boot.step('physics');
   started = true;
   const record = pending;
@@ -1877,6 +1901,7 @@ async function start() {
   wake();
   // 最初の盤面を描いてから起動の画面を閉じる（タイトルなら「はじめる」を待つ。その間は遊んだ時間を数えない）
   if (title) playClock.pause();
+  performance.mark('e11:board');
   requestAnimationFrame(() => requestAnimationFrame(() => boot.ready({
     title,
     onStart() {
@@ -1886,6 +1911,12 @@ async function start() {
       offerStartTips();
     },
   })));
+  // ネジまるの描き手は、最初の盤面を出してから作る（E11。WebGL の文脈と景色の焼き込みは重く、最初の描画を遅らせていた）
+  // 起動の画面が閉じる動き（0.45 秒）を見せ終えてから作る（作る間は 1 フレームが止まるので、閉じる前の画面のまま待たせない）
+  requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
+    mascot.begin();
+    performance.mark('e11:mascot');
+  }, 700)));
   if (!title) offerStartTips();
 }
 start();
@@ -1904,15 +1935,16 @@ window.__app = {
   get reached() { return progress.stage; },
   settings: { get: (k) => settings.get(k), all: () => settings.all() },
   get pixelRatio() { return renderer.getPixelRatio(); },
+  perf,
   get mascotDrawing() { return mascot.enabled; },
   loadMode,
   get booting() { return boot.open; },
   // 初めての導入（E4）: 今出している導入の名前（無ければ null）と、見せた導入の一覧
   get tip() { return coachTip?.id ?? null; },
   get tipsSeen() { return tutorial.seen; },
-  get rendered() { return !boot.busy && !loading && !needsRender && !tweens.size && !playing && !physics?.moving() && !inertia.active; },
+  get rendered() { return mascot.begun && !boot.busy && !loading && !needsRender && !tweens.size && !playing && !physics?.moving() && !inertia.active; },
   // rendered が false の理由（スクリーンショットのスクリプトが待ちきれなかったとき用）
-  why: () => ({ boot: boot.busy, loading, needsRender, tweens: tweens.size, playing, moving: physics?.moving(), modes: window.__app.plateModes() }),
+  why: () => ({ mascot: mascot.begun, boot: boot.busy, loading, needsRender, tweens: tweens.size, playing, moving: physics?.moving(), modes: window.__app.plateModes() }),
   // 立体の向きを Euler で直接決める（スクリーンショットで同じ向きから撮るため）
   // k は寄り引きの比（1 で空きに収まった距離）
   view(x, y, z, k = zoomK) {

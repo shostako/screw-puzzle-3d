@@ -387,6 +387,8 @@ button {
   animation: fade 0.3s ease-out;
 }
 #overlay[hidden] { display: none; }
+/* 画質「軽い」・遅い端末ではぼかさず、幕を少し濃くして後ろの文字を沈める（E11） */
+.no-blur #overlay { background: rgba(29, 36, 48, 0.5); -webkit-backdrop-filter: none; backdrop-filter: none; }
 @keyframes fade { from { opacity: 0; } }
 .card {
   min-width: 240px;
