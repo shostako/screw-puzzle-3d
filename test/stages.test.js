@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { stageConfig, stageLevel, hiddenAtStart, START_VIEW } from '../src/stages.js';
+import {
+  stageConfig, stageLevel, hiddenAtStart, START_VIEW, chapterOf, stageStep, isFinale, CHAPTERS, CHAPTER_SIZE, MAX_LEVEL, SCREWS, curveConfig,
+} from '../src/stages.js';
+import { ALL_KINDS } from '../src/generator.js';
 import { createProgress, STORAGE_KEY } from '../src/progress.js';
 import { createGame } from '../src/game.js';
 import { validateBoard, blockerFor } from '../src/board.js';
@@ -7,7 +10,7 @@ import { safeBlocker } from '../src/safe.js';
 import { newGame, removeScrew, status } from '../src/rules.js';
 import { eulerMatrix, applyMatrix } from '../src/geom.js';
 
-const STAGES = Array.from({ length: 30 }, (_, i) => i + 1);
+const STAGES = Array.from({ length: 30 }, (_, i) => i + 1);   // 1〜3 章
 const levels = new Map();
 const level = (n) => {
   if (!levels.has(n)) levels.set(n, stageLevel(n));
@@ -84,24 +87,25 @@ describe('ステージの盤面', () => {
     expect(level(6).meta.kind).toBe('table');
   });
 
-  it('進むほど難しくなる（色・札・混ぜ方は減らず、ねじの数は増えていく）', () => {
-    for (let n = 2; n <= 60; n++) {
+  it('導入（1〜6）は易しい方から増え、7 から先はそれより多い', () => {
+    for (let n = 2; n <= 6; n++) {
       const a = stageConfig(n - 1), b = stageConfig(n);
       expect(b.colors, `ステージ ${n} の色`).toBeGreaterThanOrEqual(a.colors);
-      // 札はステージ 3 で 2 枚まで増やし、中の板を覚える 4 では 1 枚に戻す。そこから先は減らさない
+      // 札はステージ 3 で 2 枚まで増やし、中の板を覚える 4 では 1 枚に戻す
       if (n !== 4) expect(b.labels, `ステージ ${n} の札`).toBeGreaterThanOrEqual(a.labels);
       expect(b.win, `ステージ ${n} の混ぜ方`).toBeGreaterThanOrEqual(a.win);
-      expect(b.noise, `ステージ ${n} の混ぜ方`).toBeGreaterThanOrEqual(a.noise);
-      expect(b.minSlots ?? 0, `ステージ ${n} の待機スロットの回数`).toBeGreaterThanOrEqual(a.minSlots ?? 0);
+    }
+    for (let n = 7; n <= 60; n++) {
+      expect(stageConfig(n).colors).toBeGreaterThanOrEqual(stageConfig(6).colors);
+      expect(stageConfig(n).win).toBeGreaterThanOrEqual(stageConfig(6).win);
     }
     const avg = (ns) => ns.reduce((m, n) => m + level(n).screws.length, 0) / ns.length;
     const first = avg([1, 2, 3]), intro = avg([4, 5, 6]), mid = avg([7, 8, 9, 10, 11, 12]), late = avg([25, 26, 27, 28, 29, 30]);
     expect(first).toBeLessThan(intro);
     expect(intro).toBeLessThanOrEqual(mid);
-    expect(mid).toBeLessThan(late);
     expect(new Set(level(30).queue).size).toBeGreaterThan(new Set(level(1).queue).size);
+    expect(late).toBeGreaterThanOrEqual(first);
   });
-
   it('7 から先の盤面は層が 2 段以上。待機スロットの回数の条件は、満たせるシードがあれば満たす（D5）', () => {
     let met = 0, asked = 0;
     for (let n = 7; n <= 48; n++) {
@@ -116,7 +120,7 @@ describe('ステージの盤面', () => {
   it('ステージの盤面はスマホで待てる時間で作れる', () => {
     const times = Array.from({ length: 30 }, (_, i) => {
       const t = performance.now();
-      stageLevel(i + 31);
+      stageLevel(i + 31);   // 4〜6 章（大物を 3 つ含む）
       return performance.now() - t;
     });
     const avg = times.reduce((a, b) => a + b, 0) / times.length;
@@ -128,6 +132,93 @@ describe('ステージの盤面', () => {
   it('おかしなステージ番号は受け付けない', () => {
     expect(() => stageConfig(0)).toThrow();
     expect(() => stageConfig(1.5)).toThrow();
+  });
+});
+
+describe('章と難しさの曲線（E8）', () => {
+  it('10 ステージで 1 章。章の番号・範囲・何番目か', () => {
+    expect(chapterOf(1)).toMatchObject({ no: 1, first: 1, last: 10, pos: 1 });
+    expect(chapterOf(10)).toMatchObject({ no: 1, pos: 10 });
+    expect(chapterOf(11)).toMatchObject({ no: 2, first: 11, last: 20, pos: 1 });
+    expect(chapterOf(60)).toMatchObject({ no: 6, pos: 10 });
+    // 7 章から先は 2〜6 章の組を回す
+    expect(chapterOf(61).no).toBe(7);
+    expect(chapterOf(61).kinds).toEqual(CHAPTERS[1].kinds);
+    expect(chapterOf(111).kinds).toEqual(CHAPTERS[1].kinds);
+    expect(chapterOf(101).kinds).toEqual(CHAPTERS[5].kinds);
+    expect(() => chapterOf(0)).toThrow();
+    for (const c of CHAPTERS) {
+      expect(c.kinds).toHaveLength(CHAPTER_SIZE);
+      for (const k of c.kinds) expect(ALL_KINDS).toContain(k);
+    }
+  });
+
+  it('ステージ 1〜10 の形は M7 からの並び（導入の箱・本棚・机、7〜10 は箱・車・本棚・家）', () => {
+    expect(Array.from({ length: 10 }, (_, i) => stageConfig(i + 1).kind))
+      .toEqual(['box', 'box', 'box', 'box', 'shelf', 'table', 'box', 'car', 'shelf', 'house']);
+  });
+
+  it('家具 3 種と題材 9 種が、ステージ 60 までにどれも出る。題材は章ごとに 3〜4 種（6 章は総まとめ）', () => {
+    const seen = new Set(Array.from({ length: 60 }, (_, i) => stageConfig(i + 1).kind));
+    expect([...seen].sort()).toEqual([...ALL_KINDS].sort());
+    for (const c of CHAPTERS.slice(1, -1)) {
+      const themes = new Set(c.kinds.filter((k) => !['box', 'shelf', 'table'].includes(k)));
+      expect(themes.size).toBeGreaterThanOrEqual(3);
+      expect(themes.size).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it('のこぎりの歯: 章の中で上がり、章の 10 番目（大物）がその章でいちばん高い。次の章の頭で下がるが、下がりすぎない', () => {
+    for (let c = 1; c <= 12; c++) {
+      const first = c === 1 ? 7 : (c - 1) * CHAPTER_SIZE + 1, last = c * CHAPTER_SIZE;
+      const steps = Array.from({ length: last - first + 1 }, (_, i) => stageStep(first + i));
+      expect(isFinale(last)).toBe(true);
+      expect(Math.max(...steps.slice(0, -1)), `${c} 章の大物`).toBeLessThan(steps.at(-1));
+      // 前半より後半が高い
+      const half = Math.floor(steps.length / 2);
+      const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+      expect(mean(steps.slice(half)), `${c} 章`).toBeGreaterThan(mean(steps.slice(0, half)));
+      if (c === 1) continue;
+      const prevEnd = stageStep(first - 1), prevStart = stageStep(c === 2 ? 7 : first - CHAPTER_SIZE);
+      expect(steps[0], `${c} 章の頭は前の章の大物より下がる`).toBeLessThan(prevEnd);
+      // 1〜6 章は 3 段まで。7 章から先は同じ山を繰り返すので、大物から次の頭までの差は山の高さ（5 段）
+      expect(prevEnd - steps[0], `${c} 章の頭は下がりすぎない`).toBeLessThanOrEqual(c <= 6 ? 3 : 5);
+      expect(steps[0], `${c} 章の頭は前の章の頭より下がらない`).toBeGreaterThanOrEqual(prevStart);
+    }
+    for (let n = 7; n <= 200; n++) expect(stageStep(n)).toBeLessThanOrEqual(MAX_LEVEL);
+    expect(stageStep(200)).toBe(MAX_LEVEL);
+  });
+
+  it('大物は色が章でいちばん多く、ねじの本数は章の中ほどより多い（作った盤面で）', () => {
+    for (let c = 1; c <= 3; c++) {
+      const ns = Array.from({ length: CHAPTER_SIZE }, (_, i) => (c - 1) * CHAPTER_SIZE + i + 1).filter((n) => n >= 7);
+      const boss = level(c * CHAPTER_SIZE);
+      for (const n of ns) expect(new Set(level(n).queue).size, `${c} 章のステージ ${n}`).toBeLessThanOrEqual(new Set(boss.queue).size);
+      const counts = ns.map((n) => level(n).screws.length).sort((a, b) => a - b);
+      expect(boss.screws.length, `${c} 章の大物のねじ`).toBeGreaterThanOrEqual(counts[Math.floor(counts.length / 2)]);
+    }
+  });
+
+  it('段を上げると、色・札・混ぜ方・ねじの下限・待機スロットの回数は減らない（どの形でも）', () => {
+    const lo = (cfg) => {
+      // want が通るねじの本数のいちばん少ない数
+      for (let k = 0; k <= 60; k++) if (cfg.want({ screws: { length: k }, meta: { difficulty: { layers: 9 } } })) return k;
+      return null;
+    };
+    for (const kind of ALL_KINDS) {
+      for (let s = 1; s <= MAX_LEVEL; s++) {
+        const a = curveConfig(kind, s - 1), b = curveConfig(kind, s);
+        for (const key of ['colors', 'labels', 'win', 'noise', 'minSlots']) expect(b[key], `${kind} 段 ${s} の ${key}`).toBeGreaterThanOrEqual(a[key]);
+        expect(lo(b)).toBeGreaterThanOrEqual(lo(a));
+        expect(lo(b)).toBeGreaterThanOrEqual(SCREWS[kind][0]);
+        expect(lo(b)).toBeLessThanOrEqual(SCREWS[kind][1]);
+      }
+    }
+  });
+
+  it('ステージの盤面の meta に章と空の名前がある', () => {
+    expect(level(12).meta).toMatchObject({ stage: 12, chapter: 2, sky: 'ch2' });
+    expect(level(3).meta).toMatchObject({ chapter: 1, sky: 'ch1' });
   });
 });
 

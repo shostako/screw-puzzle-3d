@@ -1,19 +1,21 @@
 // ランダムの盤面（D6）。「おまかせ」（ランダムな番号で1問）と「今日の1問」（日付で決まる1問）。
-// 難しさは 3 段（やさしい・ふつう・むずかしい）で、それぞれステージの帯の設定（stageConfig）をそのまま借りる。
-// 形（家具 3 種と題材 3 種）は番号から決まる乱数で選び、その形の帯の中のステージの設定で作る。
+// 難しさは 3 段（やさしい・ふつう・むずかしい）で、それぞれステージの曲線（E8、stages.js の curveConfig）の段を借りる。
+// 形（家具 3 種と題材 9 種）は番号から決まる乱数で選び、その形と段の設定で作る（章の大物の上乗せは無し）。
 // こうすると、ステージと同じ条件（ねじの数の範囲・層 2 段以上・待機スロットの回数）で難しさがそろい、
 // 解ける保証（生成器が手順を見つけた盤面しか返さない）も、親子のルール（held）もステージと同じに守られる。
 // 同じ番号と難しさなら同じ盤面（Math.random は使わない。番号を選ぶときだけ画面側が使う）。
 
-import { mulberry32 } from './generator.js';
-import { stageConfig, pickLevel, ROTATION } from './stages.js';
+import { mulberry32, ALL_KINDS } from './generator.js';
+import { curveConfig, pickLevel } from './stages.js';
 
-// 難しさの段と、借りるステージの帯の始まり（7, 13, 19 … は ROTATION の頭がそろう番号）
+// 難しさの段と、借りる曲線の段（stages.js の stageStep と同じ数。2 章の頭・3〜4 章の中ほど・6 章の終わりの手前）
 export const DIFFICULTIES = {
-  easy: { label: 'やさしい', band: 7 },     // 4 色・札 2 枚・ねじ 15〜21 本・層 2 段以上
-  normal: { label: 'ふつう', band: 19 },    // 5 色・札 3 枚・ねじ 18〜30 本
-  hard: { label: 'むずかしい', band: 37 },  // 6 色・札 4 枚・ねじ 24〜30 本・待機スロット 2 回を「なるべく」
+  easy: { label: 'やさしい', step: 2 },     // 4 色・札 2 枚・ねじ 15 本から（形による）・層 2 段以上
+  normal: { label: 'ふつう', step: 6 },     // 5 色・札 3 枚・ねじ 21 本から・待機スロット 1 回を「なるべく」
+  hard: { label: 'むずかしい', step: 12 },  // 6 色・札 4 枚・ねじ 27 本から・待機スロット 2 回を「なるべく」
 };
+// おまかせで選ぶ形（家具 3 種と題材 9 種）
+export const RANDOM_KINDS = ALL_KINDS;
 export const DIFFICULTY_IDS = Object.keys(DIFFICULTIES);
 // 今日の1問の難しさ
 export const DAILY_DIFFICULTY = 'normal';
@@ -32,8 +34,8 @@ export const isRandomNo = (no) => Number.isInteger(no) && no >= 1 && no <= MAX_R
 export function randomConfig(no, difficulty) {
   const d = DIFFICULTIES[difficulty];
   if (!d) throw new Error(`難しさが正しくない: ${difficulty}`);
-  const k = Math.floor(mulberry32(no * 2654435761 + 97)() * ROTATION.length);
-  return stageConfig(d.band + k);
+  const k = Math.floor(mulberry32(no * 2654435761 + 97)() * RANDOM_KINDS.length);
+  return curveConfig(RANDOM_KINDS[k], d.step);
 }
 
 // おまかせの盤面。meta に random: { no, difficulty } を持つ

@@ -576,3 +576,138 @@ button {
 
 /* 設定でネジまるを隠したとき */
 .no-mascot #mascot { display: none; }
+
+/* 章の終わり（E9）: クリアのカードの星の下に、章の星の合計と次の章の予告 */
+.card #end-chapter[hidden] { display: none; }
+#end-chapter {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: -6px 0 14px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: var(--hole);
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+#end-chapter .ce-head { color: var(--ink); font-size: 15px; font-weight: 800; }
+#end-chapter .ce-stars {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  color: color-mix(in srgb, var(--accent) 80%, var(--ink));
+  font-size: 17px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+#end-chapter .ce-next { margin-top: 4px; color: var(--ink); font-weight: 700; }
+.crown { width: 20px; height: 20px; fill: var(--accent); stroke: color-mix(in srgb, var(--accent) 55%, var(--ink)); stroke-width: 1.5; stroke-linejoin: round; }
+/* 章の終わりにカードの周りへ散らす星（色はねじの色を回す） */
+.spark.confetti { width: 12px; height: 12px; margin: -6px 0 0 -6px; background: var(--c, var(--accent)); animation-duration: 1.1s; animation-fill-mode: both; }
+
+/* 章の頭のお披露目: 章の名前の帯（指の操作は下へ通す） */
+.ch-banner {
+  position: fixed;
+  left: 50%;
+  top: 34%;
+  translate: -50% -50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 26px 12px;
+  border-radius: 20px;
+  background: var(--panel);
+  box-shadow: var(--lift);
+  color: var(--ink);
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 2;
+  animation: ch-banner 2.6s ease-out both;
+}
+.ch-banner small { font-size: 13px; font-weight: 700; color: var(--ink-soft); letter-spacing: 0.1em; }
+.ch-banner b { font-size: 24px; font-weight: 800; letter-spacing: 0.06em; }
+@keyframes ch-banner {
+  0% { opacity: 0; scale: 0.6; }
+  12% { opacity: 1; scale: 1.06; }
+  20% { scale: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; translate: -50% -70%; }
+}
+
+/* ステージ一覧（E9）: 章ごとに見出し（章の名前と星の合計）と 5 列のステージ */
+#stages {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(29, 36, 48, 0.35);
+  z-index: 5;
+  animation: fade 0.2s ease-out;
+}
+#stages[hidden] { display: none; }
+#stages .card {
+  display: flex;
+  flex-direction: column;
+  width: min(360px, calc(100vw - 24px));
+  max-height: calc(100vh - 48px);
+  box-sizing: border-box;
+  padding: 20px 14px 10px;
+}
+#stages h2 { font-size: 22px; }
+#st-total { margin: 2px 0 10px; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#stages .pick {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+  min-height: 52px;
+  margin: 0 4px 10px;
+  border: none;
+  border-radius: 18px;
+  background: var(--accent);
+  color: color-mix(in srgb, var(--accent) 25%, #000);
+  box-shadow: 0 4px 0 color-mix(in srgb, var(--accent) 70%, #000);
+}
+#stages .pick b { font-size: 17px; font-weight: 800; }
+#stages .pick small { font-size: 12px; opacity: 0.8; }
+#st-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 2px 4px 4px; overscroll-behavior: contain; }
+.chap { margin: 0 0 14px; scroll-margin-top: 4px; }
+.chap header { display: flex; align-items: baseline; gap: 6px; margin: 0 2px 6px; text-align: left; }
+.chap header small { font-size: 12px; font-weight: 700; color: var(--ink-soft); white-space: nowrap; }
+.chap header b { flex: 1; font-size: 15px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-sum { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--accent) 80%, var(--ink)); white-space: nowrap; }
+.ch-sum svg:not(.crown) { width: 16px; height: 16px; fill: none; stroke: var(--ink-soft); stroke-width: 2; }
+.chap.locked header b { color: var(--ink-soft); }
+.ch-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.st {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  padding: 2px 0;
+  border: 2px solid var(--hole);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 3px 0 var(--hole);
+}
+.st .n { font-size: 17px; font-weight: 800; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.st .ss { font-size: 10px; letter-spacing: -0.05em; color: color-mix(in srgb, var(--accent) 85%, var(--ink)); }
+.st.next { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, #fff); }
+.st.next .ss { color: var(--ink-soft); font-weight: 700; letter-spacing: 0; }
+.st.playing { outline: 3px solid color-mix(in srgb, var(--accent) 60%, var(--ink)); outline-offset: 1px; }
+.st.locked { background: var(--hole); box-shadow: none; }
+.st.locked svg { width: 18px; height: 18px; fill: none; stroke: var(--ink-soft); stroke-width: 2; opacity: 0.7; }
+#st-close {
+  display: block;
+  flex: none;
+  margin: 6px auto 0;
+  min-height: 40px;
+  min-width: 120px;
+  border: none;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 15px;
+}
