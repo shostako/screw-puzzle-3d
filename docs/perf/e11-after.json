@@ -1,0 +1,222 @@
+{
+  "label": "after",
+  "at": "2026-10-04T03:15:43.930Z",
+  "bytes": {
+    "js": {
+      "raw": 935810,
+      "gzip": 235329
+    },
+    "css": {
+      "raw": 23659,
+      "gzip": 6142
+    },
+    "webp": {
+      "raw": 38744,
+      "gzip": 38744
+    },
+    "wasm": {
+      "raw": 3105893,
+      "gzip": 1179524
+    },
+    "woff2": {
+      "raw": 186892,
+      "gzip": 186892
+    }
+  },
+  "startupLocal": {
+    "firstBoard": 5415.700000000186,
+    "wasmStart": 48,
+    "wasmEnd": 265.10000000009313,
+    "jsEnd": 67.89999999990687,
+    "marks": {
+      "main": 281,
+      "env": 2098,
+      "physics-start": 2112,
+      "physics": 2233,
+      "board": 4649
+    },
+    "runs": [
+      6247,
+      5416,
+      5398
+    ]
+  },
+  "startup4g": {
+    "firstBoard": 9230,
+    "wasmStart": 199.39999999990687,
+    "wasmEnd": 8244.299999999814,
+    "jsEnd": 3737.899999999907,
+    "marks": {
+      "main": 3805,
+      "env": 5536,
+      "physics-start": 5549,
+      "physics": 8268,
+      "board": 8539
+    },
+    "runs": [
+      9230,
+      9386,
+      9211
+    ]
+  },
+  "rotateAuto": {
+    "frames": 18,
+    "avg": 160.17222222222213,
+    "p95": 250,
+    "max": 250,
+    "slow": 0.8333333333333334,
+    "recent": {
+      "frames": 18,
+      "avg": 160.17222222222213,
+      "p95": 250,
+      "max": 250,
+      "slow": 0.8333333333333334
+    },
+    "renderMs": 1.2727272726637735,
+    "drawn": 22,
+    "mascotDrawn": 21,
+    "calls": 73,
+    "triangles": 43658,
+    "geometries": 13,
+    "textures": 2,
+    "heapMB": 21.865942001342773,
+    "pixelRatio": 1.5,
+    "uptime": 11848.900000000373,
+    "later": {
+      "frames": 26,
+      "avg": 101.92307692307685,
+      "p95": 150,
+      "max": 216.70000000000073,
+      "slow": 0.8076923076923077,
+      "recent": {
+        "frames": 44,
+        "avg": 125.75227272727265,
+        "p95": 250,
+        "max": 250,
+        "slow": 0.8181818181818182
+      },
+      "renderMs": 0.8800000000434617,
+      "drawn": 30,
+      "mascotDrawn": 26,
+      "calls": 73,
+      "triangles": 43658,
+      "geometries": 13,
+      "textures": 2,
+      "heapMB": 24.869192123413086,
+      "pixelRatio": 1,
+      "uptime": 15919.900000000373
+    },
+    "runs": [
+      126,
+      160,
+      164
+    ]
+  },
+  "rotateLight": {
+    "frames": 62,
+    "avg": 65.05000000000001,
+    "p95": 100,
+    "max": 150,
+    "slow": 0.9354838709677419,
+    "recent": {
+      "frames": 62,
+      "avg": 65.05000000000001,
+      "p95": 100,
+      "max": 150,
+      "slow": 0.9354838709677419
+    },
+    "renderMs": 0.8619047619018053,
+    "drawn": 63,
+    "mascotDrawn": 47,
+    "calls": 73,
+    "triangles": 19466,
+    "geometries": 13,
+    "textures": 2,
+    "heapMB": 12.537625312805176,
+    "pixelRatio": 1,
+    "uptime": 11482.799999999814,
+    "later": {
+      "frames": 60,
+      "avg": 67.21833333333333,
+      "p95": 83.40000000000146,
+      "max": 133.3000000000011,
+      "slow": 0.9833333333333333,
+      "recent": {
+        "frames": 120,
+        "avg": 66.94083333333334,
+        "p95": 100,
+        "max": 150,
+        "slow": 0.975
+      },
+      "renderMs": 0.663934426198973,
+      "drawn": 61,
+      "mascotDrawn": 44,
+      "calls": 73,
+      "triangles": 19466,
+      "geometries": 13,
+      "textures": 2,
+      "heapMB": 12.784852027893066,
+      "pixelRatio": 1,
+      "uptime": 15558.399999999441
+    },
+    "runs": [
+      59,
+      65,
+      68
+    ]
+  },
+  "idle": {
+    "frames": 0,
+    "avg": 0,
+    "p95": 0,
+    "max": 0,
+    "slow": 0,
+    "recent": {
+      "frames": 0,
+      "avg": 0,
+      "p95": 0,
+      "max": 0,
+      "slow": 0
+    },
+    "renderMs": 0,
+    "drawn": 0,
+    "mascotDrawn": 52,
+    "calls": 73,
+    "triangles": 43658,
+    "geometries": 13,
+    "textures": 2,
+    "heapMB": 26.03287696838379,
+    "pixelRatio": 2,
+    "uptime": 10424.30000000028
+  },
+  "removing": {
+    "frames": 755,
+    "avg": 98.16291390728475,
+    "p95": 216.70000000000437,
+    "max": 250,
+    "slow": 0.9072847682119205,
+    "recent": {
+      "frames": 120,
+      "avg": 67.63499999999998,
+      "p95": 133.3000000000029,
+      "max": 183.3000000000029,
+      "slow": 0.875
+    },
+    "renderMs": 1.055679012350968,
+    "drawn": 810,
+    "mascotDrawn": 867,
+    "calls": 4,
+    "triangles": 2102,
+    "geometries": 13,
+    "textures": 2,
+    "heapMB": 15.788399696350098,
+    "pixelRatio": 1,
+    "uptime": 106878.80000000028
+  },
+  "rain": {
+    "frames": 35,
+    "avg": 71.90285714285689,
+    "p95": 166.70000000001164,
+    "drops": 0
+  }
+}
