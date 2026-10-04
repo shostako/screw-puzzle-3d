@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { createBoot, wantsTitle } from './boot.js';
+import { createBackdrop } from './backdrop.js';
+import { createBoot, wantsHold, wantsTitle } from './boot.js';
 import { createGesture } from './gesture.js';
 import { dragRotation, zoomDistance, radPerPx, fitRegion, fitDistance, fitPoints, spreadPx, focalPx, ZOOM_RANGE, createInertia } from './view.js';
 import { buildBoard, setKnurl, setContact, setDrives, driveIcon } from './scene.js';
@@ -127,6 +128,8 @@ function usePixelRatios() {
 // ぼかしは幕の後ろが変わるたび（雨・ネジまるの跳び・落ちる板）画面全体に掛け直すので、クリアの直後のフレームが倍ほど重くなる
 function useBlur() {
   document.body.classList.toggle('no-blur', !quality().blur || pixelLevel > 0);
+  // 背景の雲と粒（F2）も、画質「軽い」か遅い端末と分かった時は止める
+  document.body.classList.toggle('still-bg', !quality().motionBg || pixelLevel > 0);
 }
 usePixelRatios();
 const frameTimes = [];
@@ -145,6 +148,9 @@ function watchFrameTime(now, last) {
 }
 // 板の接する所の暗さを描くか: 画質の設定で入っていて、遅い端末として切っていない
 const contactOn = () => quality().contact && !contactCut;
+
+// 背景の町並みを、立体を回した分だけずらす（F2。描くたびに向きを渡す）
+const backdrop = createBackdrop();
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
@@ -1922,6 +1928,7 @@ function frame(now) {
     const t0 = perf ? performance.now() : 0;
     renderer.render(scene, camera);
     perf?.frame(now, performance.now() - t0);
+    backdrop.update(model.quaternion);
     if (coachTip) placeHand();
     watchFrameTime(now, lastDraw);
     lastDraw = now;
@@ -1951,24 +1958,30 @@ async function start() {
   resize();
   wake();
   // 最初の盤面を描いてから起動の画面を閉じる（タイトルなら「はじめる」を待つ。その間は遊んだ時間を数えない）
-  if (title) playClock.pause();
+  // タイトルでなければ、読み込みが速くてもロゴとネジまるが見えるよう少し残す（F2。残している間も時間は数えない）
+  const hold = !title && wantsHold({ query, webdriver: navigator.webdriver });
+  if (title || hold) playClock.pause();
   performance.mark('e11:board');
   requestAnimationFrame(() => requestAnimationFrame(() => boot.ready({
     title,
-    onStart() {
+    hold,
+    onStart: title ? () => {
       feedback.unlock?.();
       playClock.reset();
       if (!document.hidden) playClock.resume();
       offerStartTips();
+    } : () => {
+      if (hold && game.status === 'playing' && !document.hidden) playClock.resume();
+      offerStartTips();
     },
   })));
   // ネジまるの描き手は、最初の盤面を出してから作る（E11。WebGL の文脈と景色の焼き込みは重く、最初の描画を遅らせていた）
-  // 起動の画面が閉じる動き（0.45 秒）を見せ終えてから作る（作る間は 1 フレームが止まるので、閉じる前の画面のまま待たせない）
+  // 起動の画面が閉じる動き（0.6 秒）を見せ終えてから作る（作る間は 1 フレームが止まるので、閉じる前の画面のまま待たせない）。
+  // 起動の画面を残す時（F2）は、残している間に作る（止まるのは起動の画面の弾みだけ）
   requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
     mascot.begin();
     performance.mark('e11:mascot');
   }, 700)));
-  if (!title) offerStartTips();
 }
 start();
 
