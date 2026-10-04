@@ -42,6 +42,7 @@ export function createPerf({ renderer, now = () => performance.now() } = {}) {
   let renders = [];
   let drawn = 0;       // 描いた回数の合計（止まっている時に描いていないかを数える）
   let mascotDrawn = 0;
+  let rainDrawn = 0;   // 立体のねじの雨を描いた回数（F）
   const started = now();
   const all = [];      // 測り始め（reset）からの全部の間隔。scripts/perf.mjs が区間ごとに読む
   const allRender = [];
@@ -59,12 +60,14 @@ export function createPerf({ renderer, now = () => performance.now() } = {}) {
       last = t;
     },
     mascot() { mascotDrawn++; },
+    rain() { rainDrawn++; },
     // 区間の測り直し（スクリプトが場面ごとに呼ぶ）
     reset() {
       all.length = 0;
       allRender.length = 0;
       drawn = 0;
       mascotDrawn = 0;
+      rainDrawn = 0;
       last = null;
     },
     stats() {
@@ -77,6 +80,7 @@ export function createPerf({ renderer, now = () => performance.now() } = {}) {
         renderMs: r,
         drawn,
         mascotDrawn,
+        rainDrawn,
         calls: info?.render.calls ?? 0,
         triangles: info?.render.triangles ?? 0,
         geometries: info?.memory.geometries ?? 0,
