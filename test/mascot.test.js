@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { CUE_ACTION, STAR_WIN, cueAction, ACTIONS, WIN_JUMP, mascotPose, createMascotState } from '../src/mascot-motion.js';
+import { CUE_ACTION, STAR_WIN, cueAction, ACTIONS, WIN_JUMP, LOOK, TWIRL, lookAt, mascotPose, createMascotState } from '../src/mascot-motion.js';
 import { buildMascot, applyPose, frameCamera } from '../src/mascot.js';
 import { VIBRATION, endCue, eventCue, tapCue } from '../src/feedback.js';
 
@@ -152,6 +152,70 @@ describe('姿勢（mascotPose）', () => {
   });
 });
 
+describe('待機の軽い動きと手を振る（F）', () => {
+  const idleAt = (c, still = false) => mascotPose('idle', 0, c, still);
+
+  it('ときどき盤面の方（右上）を見上げ、反対へもちらっと見て、正面へ戻る。向きは滑らかに変わる', () => {
+    const cs = Array.from({ length: 901 }, (_, i) => (i / 900) * LOOK.every);
+    const turns = cs.map((c) => idleAt(c).headTurn);
+    expect(Math.max(...turns)).toBeCloseTo(0.55, 2);
+    expect(Math.min(...turns)).toBeCloseTo(-0.3, 2);
+    expect(idleAt(0).headTurn).toBeCloseTo(0, 9);
+    expect(idleAt(LOOK.every - 0.5).headTurn).toBeCloseTo(0, 9);
+    expect(idleAt(2.5).headTilt).toBeLessThan(0);   // 見上げる
+    for (let i = 1; i < turns.length; i++) expect(Math.abs(turns[i] - turns[i - 1])).toBeLessThan(0.02);
+    // 次の周期の頭へもぱっと飛ばない
+    expect(lookAt(LOOK.every - 1e-6).turn).toBeCloseTo(lookAt(0).turn, 6);
+  });
+
+  it('レンチをときどき1回転させる。それ以外の時は回さない', () => {
+    const at = (c) => idleAt(c).keyTwirl;
+    expect(at(TWIRL.at - 0.01)).toBe(0);
+    expect(at(TWIRL.at + TWIRL.s / 2)).toBeCloseTo(Math.PI, 5);
+    expect(at(TWIRL.at + TWIRL.s + 0.01)).toBe(0);
+    const on = Array.from({ length: 1300 }, (_, i) => at(i / 100)).filter((v) => v > 0).length;
+    expect(on / 1300).toBeLessThan(0.1);
+  });
+
+  it('「視差効果を減らす」設定では見回さず、レンチも回さない（瞬きはする）', () => {
+    for (const c of [1.5, 2.5, 5.9, TWIRL.at + 0.3]) {
+      const p = idleAt(c, true);
+      expect(p.headTurn).toBeCloseTo(0, 9);
+      expect(p.headTilt).toBeCloseTo(0, 9);
+      expect(p.keyTwirl).toBe(0);
+    }
+    expect(Array.from({ length: 400 }, (_, i) => idleAt(i * 0.02, true).blink).some(Boolean)).toBe(true);
+  });
+
+  it('成功と失敗の間は正面を向き、レンチも回さない', () => {
+    for (const a of ['win', 'win2', 'win1', 'lose']) {
+      const p = mascotPose(a, 5, 2.5);
+      expect(p.headTurn).toBe(0);
+      expect(mascotPose(a, 5, TWIRL.at + 0.3).keyTwirl).toBe(0);
+    }
+  });
+
+  it('手を振るのは盤面の始まりの短い動きで、^ ^ の目で左手を上げて振り、終わると待機へ戻る', () => {
+    expect(ACTIONS.wave).toMatchObject({ hold: false });
+    const mid = mascotPose('wave', 0.7, 0.7);
+    expect(mid.face).toBe('happy');
+    expect(mid.armL[0]).toBeLessThan(-1.5);
+    const lifts = Array.from({ length: 141 }, (_, i) => mascotPose('wave', i / 100, 0, true).armL[0]);
+    let swings = 0;
+    for (let i = 1; i < lifts.length - 1; i++) if (lifts[i] < lifts[i - 1] && lifts[i] <= lifts[i + 1] && lifts[i] < -1.5) swings++;
+    expect(swings).toBeGreaterThanOrEqual(2);
+    const end = mascotPose('wave', ACTIONS.wave.s, 3), idle = mascotPose('idle', 0, 3);
+    expect(end.armL[0]).toBeCloseTo(idle.armL[0], 2);
+    expect(end.headTurn).toBeCloseTo(idle.headTurn, 2);
+    const st = createMascotState(0);
+    expect(st.play('wave', 0)).toBe(true);
+    expect(st.current(ACTIONS.wave.s * 1000 + 10).action).toBe('idle');
+    // 手を振っている途中でも、外せないねじ・箱が満杯・クリアの合図は割り込める
+    st.play('wave', 10000);
+    expect(st.react('blocked', 10100)).toBe(true);
+  });
+});
+
 describe('ネジまるの立体（mascot.js）', () => {
   const { root, parts } = buildMascot();
 
@@ -185,7 +249,7 @@ describe('ネジまるの立体（mascot.js）', () => {
   it('どの動きでも、左下のキャンバスとカードの上のキャンバスからはみ出さない', () => {
     const camera = new THREE.PerspectiveCamera();
     const v = new THREE.Vector3();
-    for (const aspect of [108 / 140, 150 / 194]) {
+    for (const aspect of [0.771, 150 / 194]) {
       frameCamera(camera, aspect);
       camera.updateMatrixWorld();
       for (const a of Object.keys(ACTIONS)) {
@@ -203,6 +267,18 @@ describe('ネジまるの立体（mascot.js）', () => {
           }
           expect(x, `${a} ${t.toFixed(2)}s 横`).toBeLessThan(1);
           expect(y, `${a} ${t.toFixed(2)}s 縦`).toBeLessThan(1);
+        }
+      }
+      // 待機の見回しとレンチ回し（F）も、1 周期ぶんの時計ではみ出さない
+      for (let c = 0; c < TWIRL.every; c += 0.25) {
+        applyPose(parts, mascotPose('idle', 0, c), 0.27);
+        root.updateMatrixWorld(true);
+        for (const m of visibleMeshes(parts.root)) {
+          const pos = m.geometry.attributes.position;
+          for (let i = 0; i < pos.count; i += 3) {
+            v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld).project(camera);
+            expect(Math.max(Math.abs(v.x), Math.abs(v.y)), `idle ${c}s`).toBeLessThan(1);
+          }
         }
       }
     }

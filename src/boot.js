@@ -5,6 +5,21 @@
 // 進みの目安（0〜1）。JS が届いた所・wasm を読み終えた所・物理の準備ができた所
 export const STEPS = { script: 0.35, wasm: 0.85, physics: 0.92 };
 
+// 起動の画面を見せる長さ（F2）。読み込みが速い端末（2 回目からの起動）では一瞬で消えて、ロゴもネジまるも見えなかった。
+// 開いてから minShow ミリ秒は残し、読み終えたらネジまるのバンザイと合言葉を greet ミリ秒は見せてから消える
+export const HOLD = { minShow: 2200, greet: 900 };
+
+// 読み終えた時刻（ページを開いてからのミリ秒）から、消えるまでに待つ時間
+export function holdTime(now, hold = HOLD) {
+  return Math.max(hold.greet, hold.minShow - now);
+}
+
+// 起動の画面を残すか: 自動の操作（スクリーンショット・テスト）では待たせない。?boot=hold なら必ず残す（確かめ用）
+export function wantsHold({ query, webdriver }) {
+  if (query.get('boot') === 'hold') return true;
+  return !webdriver && query.get('boot') !== 'skip';
+}
+
 // 読んだバイト数から、棒の進み（script〜wasm の間）。全体の大きさが分からなければ null
 export function wasmProgress(loaded, total) {
   if (!(total > 0)) return null;
@@ -88,14 +103,24 @@ export function createBoot(doc = document) {
       if (name === 'wasm' || name === 'physics') unwatch();
       set(STEPS[name] ?? 1);
     },
-    // 読み込みが終わった。title なら「はじめる」を出し、押されたら onStart を呼んで閉じる。そうでなければすぐ閉じる
-    ready({ title = false, onStart = () => {} } = {}) {
+    // 読み込みが終わった。title なら「はじめる」を出し、押されたら onStart を呼んで閉じる。
+    // そうでなければ、hold ならバンザイを少し見せてから（HOLD）、でなければすぐ閉じて onStart を呼ぶ
+    ready({ title = false, hold = false, onStart = () => {} } = {}) {
       stopCreep();
       unwatch();
       set(1);
       if (!root) return;
       if (!title) {
-        close();
+        if (!hold) {
+          close();
+          onStart();
+          return;
+        }
+        root.classList.add('greet');
+        setTimeout(() => {
+          close();
+          onStart();
+        }, holdTime(performance.now()));
         return;
       }
       root.classList.add('title');
@@ -120,6 +145,6 @@ export function createBoot(doc = document) {
     };
     // 消える動き（CSS）の後に取り除く。動きを止めている端末でも残らないよう、時間でも消す
     root.addEventListener('animationend', done, { once: true });
-    setTimeout(done, 700);
+    setTimeout(done, 900);
   }
 }

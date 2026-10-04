@@ -322,12 +322,12 @@ export function applyPose(parts, p, yaw = 0) {
   const s = p.squash;
   P.body.scale.set(1 / Math.sqrt(s), s, 1 / Math.sqrt(s));
   P.body.rotation.set(0, 0, p.sway);
-  P.head.rotation.set(p.headTilt, 0, p.headSide);
+  P.head.rotation.set(p.headTilt, p.headTurn ?? 0, p.headSide);
   // 腕（z: 横に開く、x: 前へ出す）。画面左＝キャラの右手
   P['arm-1'].rotation.set(p.armR[1], 0, -p.armR[0]);
   P.arm1.rotation.set(p.armL[1], 0, -p.armL[0]);
   P.hand.rotation.set(0, 0, p.armR[2]);
-  P.key.rotation.set(0, 0, p.armR[0] - p.armR[2] - 0.15 + p.keyFlip * 2.9);
+  P.key.rotation.set(0, 0, p.armR[0] - p.armR[2] - 0.15 + p.keyFlip * 2.9 + (p.keyTwirl ?? 0));
   P['leg-1'].rotation.x = p.legSwing;
   P.leg1.rotation.x = -p.legSwing * 0.6;
   // 顔
