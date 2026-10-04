@@ -7,6 +7,7 @@ import { buildBoard, setKnurl, setContact, setDrives, driveIcon } from './scene.
 import { THEME, cssVariables, skyVariables } from './theme.js';
 import { bakeEnvironment } from './env.js';
 import { createMascot } from './mascot.js';
+import { createRain } from './rain.js';
 import { createGame, hudOf, applyEvent, rewindPoint } from './game.js';
 import { safeBlocker } from './safe.js';
 import { nearestScrew } from './pick.js';
@@ -637,9 +638,19 @@ function sparkle(el, chain = 1) {
   }
 }
 
-// クリアのねじの雨（E5）: このステージのねじの色の印を、画面の上から回しながら降らせる。星が多いほど多く
+// クリアのねじの雨（E5、F で立体に）: このステージの色のキャップボルトを、画面の上からいろいろな向きでゆっくり回しながら降らせる。
+// 星が多いほど多く。立体の描き手が作れない端末では、平たい印を回しながら降らせる（E5 のまま）
+const rain3d = createRain($('rain'), {
+  clock: fxClock, environment: bakeEnvironment, onDraw: perf ? () => perf.rain() : null, ...rainQuality(),
+});
+// 画面いっぱいのキャンバスなので、画質「自動」でも解像度は 1.5 まで。「軽い」と、盤面の解像度を自動で下げた（遅い端末と分かった）時は 1
+function rainQuality() {
+  return { maxRatio: quality().knurl && pixelLevel === 0 ? 1.5 : 1 };
+}
 function rain(stars) {
   const colors = [...new Set(LEVEL.screws.map((s) => s.color))];
+  rain3d.setQuality(rainQuality());
+  if (rain3d.start(stars, colors, { drive: settings.get('drives') ? 'color' : 'hex' })) return;
   const W = window.innerWidth, H = window.innerHeight;
   for (const d of rainDrops(stars, colors.length)) {
     const el = dot(colors[d.color]);
@@ -1251,7 +1262,8 @@ function rebuildBoard() {
   lastBoxAt = null;
   for (const t of tweens) tweens.delete(t);
   $('flyers').replaceChildren();
-  $('rain').replaceChildren();
+  rain3d.stop();
+  for (const el of $('rain').querySelectorAll('.drop')) el.remove();
   if (board) {
     model.remove(board.root);
     for (const p of board.plates.values()) if (p.parent === scene) scene.remove(p);
@@ -1815,6 +1827,7 @@ function applySetting(name, value) {
       setContact(board, contactOn());
     }
     mascot.setQuality({ maxRatio: quality().mascotRatio, idleFps: quality().idleFps });
+    rain3d.setQuality(rainQuality());
     requestRender();
   } else if (name === 'mascot') {
     mascot.enabled = value;
@@ -1991,6 +2004,8 @@ async function start() {
   requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(() => {
     mascot.begin();
     performance.mark('e11:mascot');
+    // 立体のねじの雨の描き手も、遊び始めて落ち着いてから、指が離れて演出も無い時に少しずつ作る（F。最初のクリアで止まらないように）
+    setTimeout(() => rain3d.prepare(() => gesture.activePointers === 0 && !playing && !tweens.size), 1200);
   }, 700)));
 }
 start();
@@ -2074,6 +2089,12 @@ window.__app = {
   get pressed() {
     const p = pressedObj?.userData.press;
     return p ? { id: pressedObj.userData.screwId, depth: p.depth } : null;
+  },
+  // 立体のねじの雨（F）: 描き手を作ったか・今降っている本数・降り始めから ms の所で止めて描く（null で戻す）
+  rain: {
+    get begun() { return rain3d.begun; },
+    get falling() { return rain3d.falling; },
+    seek: (ms) => rain3d.seek(ms),
   },
   // 箱の連鎖（E5）: 最後に閉まった箱が何連鎖目か
   get chain() { return chain; },

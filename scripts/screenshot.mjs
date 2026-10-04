@@ -1811,6 +1811,8 @@ async function feelShots(context, errors, outside) {
   // 押し込み: 見えているねじに指を置いたまま撮り、離すとそのねじが外れる
   await page.goto(url + '?seed=4&kind=box');
   await waitRendered(page);
+  // 立体の雨の描き手（F）を作り終えるまで待つ（ヘッドレスでは作る 1 手順が 1 秒近く止まり、指を置いてから離すまでが長押しになる）
+  await page.waitForFunction(() => !window.__app.rain || window.__app.rain.begun, null, { timeout: 30000 });
   const target = await page.evaluate(() => {
     const legal = new Set(window.__app.game.legal());
     return window.__app.visibleScrews().find((s) => legal.has(s.id));
@@ -1907,6 +1909,8 @@ async function feelShots(context, errors, outside) {
   for (const [stars, hints] of [[3, 0], [2, 1], [1, 2]]) {
     await page.goto(url + '?stage=1');
     await waitRendered(page);
+    // 立体の雨の描き手は遊び始めて少ししてから作る（F）。作り終えてから外す（実際の遊びでもクリアまでには作り終えている）
+    await page.waitForFunction(() => !window.__app.rain || window.__app.rain.begun, null, { timeout: 30000 });
     for (let i = 0; i < hints; i++) await page.evaluate(() => window.__app.countHint());
     // 目安の時間を超えると星が減るので、演出を待たずに続けて外す（隠れていたら落ち着くのを待ってもう一度）
     const sol = await page.evaluate(() => window.__app.solution);
@@ -1917,7 +1921,8 @@ async function feelShots(context, errors, outside) {
       }
     }
     if (stars === 3 && !before) {
-      await page.waitForFunction(() => document.querySelectorAll('.flyer.drop').length > 10 && document.getElementById('overlay').hidden, null, { timeout: 10000, polling: 'raf' })
+      // 立体の雨（F）は降っている本数を __app.rain.falling で、描き手が無い時の平たい雨は .flyer.drop の数で見る
+      await page.waitForFunction(() => (window.__app.rain?.falling >= 3 || document.querySelectorAll('.flyer.drop').length > 10) && document.getElementById('overlay').hidden, null, { timeout: 30000, polling: 'raf' })
         .catch(() => { throw new Error('クリアでねじの雨が降らない'); });
       // カードが出た直後（雨はカードより手前に降り続けている）
       await page.waitForSelector('#overlay.cleared:not([hidden])', { timeout: 10000 });

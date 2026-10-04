@@ -451,6 +451,9 @@ button {
 /* クリアのねじの雨（E5）。動きは main.js が Web Animations で付ける。終わりのカード（#overlay、z-index 3）より手前に降らせる */
 #rain { position: fixed; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
 .flyer.drop { opacity: 0.95; }
+/* 立体のねじの雨（F）: 画面いっぱいの透明なキャンバス。降っている間だけ出す */
+#rain .rain3d { position: absolute; inset: 0; width: 100%; height: 100%; }
+#rain .rain3d[hidden] { display: none; }
 
 /* クリアと詰み。幕は後ろの HUD の文字を少しぼかして、カードの上に乗るネジまると重ならないようにする（E5） */
 #overlay {

@@ -419,17 +419,20 @@ function socketGeometry(r) {
 }
 
 // ねじ部: 円柱とねじ山（らせんの管）。ふだんは板の中に隠れていて、抜けるときに見える
-function shaftGeometry(r) {
-  return cached(`shaft:${r}`, () => {
-    const sd = BOLT.shaft * r, L = BOLT.length * r;
-    const core = new THREE.CylinderGeometry(sd / 2, sd / 2, L, 12).translate(0, -L / 2, 0);
+// length はねじ部の長さ × r（既定は盤面の短いねじ。クリアの雨は長いねじを降らせる）。ねじ山は長さに合わせて巻く数を増やす。
+// coarse: 分割を粗くする（クリアの雨。画面では小さいので、1本あたりの三角形を 1/3 ほどにする）
+function shaftGeometry(r, length = BOLT.length, coarse = false) {
+  return cached(`shaft:${r}:${length}:${coarse}`, () => {
+    const sd = BOLT.shaft * r, L = length * r;
+    const turns = 3 * length / BOLT.length;
+    const core = new THREE.CylinderGeometry(sd / 2, sd / 2, L, coarse ? 8 : 12).translate(0, -L / 2, 0);
     class Helix extends THREE.Curve {
       getPoint(t, out = new THREE.Vector3()) {
-        const a = t * Math.PI * 2 * 3;
+        const a = t * Math.PI * 2 * turns;
         return out.set(Math.cos(a) * sd / 2, -t * L * 0.95 - 0.02 * r, Math.sin(a) * sd / 2);
       }
     }
-    const thread = new THREE.TubeGeometry(new Helix(), 36, 0.05 * r, 4, false);
+    const thread = new THREE.TubeGeometry(new Helix(), Math.round((coarse ? 6 : 12) * turns), 0.05 * r, coarse ? 3 : 4, false);
     return merge([core, thread]);
   });
 }
@@ -487,6 +490,16 @@ function screwObject(s, r, knurl = true, drive = 'hex') {
   g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), new THREE.Vector3(...s.dir).normalize());
   g.position.set(...s.position);
   return g;
+}
+
+// 盤面の外で描くねじ（クリアの雨、F）の形と材質。頭の上面が y = 1.2r、ねじ部の先が y = -length·r。
+// 返り値 [{ geometry, material }]（頭・穴・ねじ部）。形と材質は盤面のねじと共有する（作り直さない）。coarse はねじ部の分割を粗く
+export function screwParts(color, r, { knurl = true, drive = 'hex', length = BOLT.length, coarse = false } = {}) {
+  return [
+    { geometry: headGeometry(r, knurl, drive), material: headMaterial(SCREW_COLORS[color] ?? 0x888888) },
+    { geometry: socketOf(r, drive), material: socketMaterial() },
+    { geometry: shaftGeometry(r, length, coarse), material: shaftMaterial() },
+  ];
 }
 
 // 作った盤面のねじの頭と穴を差し替える（遊んでいる途中で画質や穴の形の設定を変えたとき。盤面は作り直さない）

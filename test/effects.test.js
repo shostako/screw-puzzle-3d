@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, batchDuration, groundOf, pitchOf, THREAD_TURNS, pressDepth, releaseDepth, blockerFlash, chainStep, lidMark, sparkOf, rainDrops } from '../src/effects.js';
+import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, batchDuration, groundOf, pitchOf, THREAD_TURNS, pressDepth, releaseDepth, blockerFlash, chainStep, lidMark, sparkOf, rainDrops, rainFall } from '../src/effects.js';
 import { BOLT, buildBoard } from '../src/scene.js';
 import { SCREW_RADIUS } from '../src/board.js';
 import { stageLevel } from '../src/stages.js';
@@ -141,6 +141,58 @@ describe('手触り（E5）', () => {
     // カードを出すまでの間は 0.5 秒ほど
     expect(FX.clear.pause).toBeGreaterThanOrEqual(400);
     expect(FX.clear.pause).toBeLessThanOrEqual(700);
+  });
+});
+
+describe('立体のねじの雨（F）', () => {
+  const drops = rainDrops(3, 4);
+  const unit = (v) => Math.hypot(...v);
+
+  it('1本ごとに最初の姿勢と回る軸が違い、軸は単位ベクトルで球の上に散っている', () => {
+    for (const d of drops) {
+      expect(unit(d.tilt.slice(0, 3))).toBeCloseTo(1, 9);
+      expect(unit(d.spin)).toBeCloseTo(1, 9);
+      expect(Math.abs(d.depth)).toBeLessThanOrEqual(1);
+    }
+    // 軸がどれも同じ向きに寄っていない（平均の長さが短い = 散っている）
+    for (const key of ['tilt', 'spin']) {
+      const mean = [0, 1, 2].map((c) => drops.reduce((t, d) => t + d[key][c], 0) / drops.length);
+      expect(unit(mean)).toBeLessThan(0.35);
+    }
+    // 同じ姿勢のねじは無い
+    const keys = new Set(drops.map((d) => d.tilt.map((x) => x.toFixed(2)).join()));
+    expect(keys.size).toBe(drops.length);
+  });
+
+  it('ゆっくり回る: 落ちる間に回るのは 0.5〜1.3 回転で、向きは右回りと左回りが半々', () => {
+    for (const d of drops) {
+      expect(Math.abs(d.turns)).toBeGreaterThanOrEqual(0.5);
+      expect(Math.abs(d.turns)).toBeLessThanOrEqual(1.3);
+    }
+    const right = drops.filter((d) => d.turns > 0).length;
+    expect(Math.abs(right - drops.length / 2)).toBeLessThanOrEqual(1);
+  });
+
+  it('画面の上の外から出て、下の外まで落ちきる。だんだん速くなり、横揺れは小さい', () => {
+    const W = 390, H = 844;
+    for (const d of drops) {
+      const a = rainFall(d, 0, W, H), b = rainFall(d, 1, W, H);
+      expect(a.y).toBeLessThan(-FX.rain3d.head);
+      expect(b.y).toBeGreaterThan(H + FX.rain3d.head);
+      expect(a.angle).toBeCloseTo(0, 9);
+      expect(b.angle).toBeCloseTo(d.turns * 2 * Math.PI, 9);
+      const ys = [0, 0.25, 0.5, 0.75, 1].map((k) => rainFall(d, k, W, H).y);
+      const steps = ys.slice(1).map((y, i) => y - ys[i]);
+      for (let i = 1; i < steps.length; i++) expect(steps[i]).toBeGreaterThan(steps[i - 1]);
+      for (const k of [0.1, 0.3, 0.6, 0.9]) {
+        const p = rainFall(d, k, W, H);
+        expect(Math.abs(p.x - (d.x * W + d.drift * W * k))).toBeLessThanOrEqual(FX.rain3d.sway + 1e-9);
+      }
+    }
+  });
+
+  it('1本が画面を落ちきるのに 1.7 秒以上かける（ゆっくり落ちる）', () => {
+    for (const d of drops) expect(d.ms).toBeGreaterThanOrEqual(1700);
   });
 });
 

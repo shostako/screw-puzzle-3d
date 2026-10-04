@@ -26,7 +26,9 @@ export const FX = {
   press: { ms: 60, back: 160, depth: 0.28 },                    // 押し込み: 沈む時間・戻る時間・沈む深さ × r
   blocker: { ms: 460, tint: 0.55, glow: 0.4 },                  // 塞いでいる板が一瞬光る（1回。色を寄せる割合と光の強さ）
   chain: { window: 2600, max: 4 },                              // 前の箱が閉まってからこの時間（ms）のうちに閉まると連鎖。数えるのは max まで
-  clear: { pause: 520, rain: 2300, drops: [14, 24, 36] },       // クリア: カードを出すまでの間・ねじの雨が降りきる時間・★1〜3 の粒の数
+  clear: { pause: 520, rain: 3600, drops: [14, 24, 36] },       // クリア: カードを出すまでの間・ねじの雨が降りきる時間・★1〜3 の粒の数
+  // 立体のねじの雨（F）: 1本が落ちる時間（rain に対する割合の幅）・落ちる間に回る回数の幅・頭の直径（px）・横に揺れる幅（px）
+  rain3d: { fall: [0.5, 0.75], turns: [0.5, 1.3], head: 24, sway: 14 },
 };
 
 const clamp01 = (k) => Math.min(1, Math.max(0, k));
@@ -84,24 +86,52 @@ export function sparkOf(n) {
   return { count: 6 + 4 * (n - 1), reach: 1 + 0.25 * (n - 1) };
 }
 
-// クリアのねじの雨: 星の数で粒を増やす。返り値は粒ごとの { x: 画面の横の割合, delay, ms, turns, drift: 横へ流れる割合, size, color: 色の番号 }。
+// クリアのねじの雨: 星の数で粒を増やす。返り値は粒ごとの
+//   { x: 画面の横の割合, delay, ms, turns, drift: 横へ流れる割合, size, color: 色の番号,
+//     tilt: 最初の姿勢 [軸 x, y, z, 角（ラジアン）], spin: 落ちる間に回る軸 [x, y, z], depth: 奥行き（-1〜1）, phase: 横揺れの位相 }。
+// tilt・spin・depth・phase は立体の雨（F、rain.js）が使う。軸は単位球の上に一様に散らす。
 // 乱数は使わず、黄金比で散らす（毎回同じ降り方。スクリーンショットで比べられる）
 export function rainDrops(stars, colors = 1) {
   const n = FX.clear.drops[Math.max(1, Math.min(3, stars)) - 1];
+  const { fall, turns } = FX.rain3d;
   const g = 0.6180339887;
+  const frac = (x) => x - Math.floor(x);
+  // 単位球の上の向き（a, b は 0〜1）
+  const sphere = (a, b) => {
+    const z = 1 - 2 * a, s = Math.sqrt(1 - z * z), p = 2 * Math.PI * b;
+    return [s * Math.cos(p), s * Math.sin(p), z];
+  };
   return Array.from({ length: n }, (_, i) => {
-    const u = (i * g) % 1, v = (i * g * g + 0.37) % 1;
-    const ms = FX.clear.rain * (0.5 + 0.3 * v);
+    const u = frac(i * g), v = frac(i * g * g + 0.37);
+    const w = frac(i * 0.7548776662 + 0.11), q = frac(i * 0.5698402910 + 0.53);   // 2 次元の黄金比の列（向きを散らす）
+    const ms = FX.clear.rain * (fall[0] + (fall[1] - fall[0]) * v);
     return {
       x: 0.04 + 0.92 * u,
-      delay: (FX.clear.rain - ms) * ((i / n + v * 0.3) % 1) * 0.6,   // 前寄せにして、カードが出る頃には画面じゅうに散っている
+      delay: (FX.clear.rain - ms) * ((i / n + v * 0.3) % 1),   // 降り始めをずらして、一塊でなく画面じゅうに散って降る
       ms,
-      turns: (v < 0.5 ? -1 : 1) * (0.6 + v),
+      turns: (i % 2 ? -1 : 1) * (turns[0] + (turns[1] - turns[0]) * frac(w + q)),
       drift: (u - 0.5) * 0.12,
       size: 0.8 + 0.5 * v,
       color: i % colors,
+      tilt: [...sphere(w, q), 2 * Math.PI * frac(u + w)],
+      spin: sphere(frac(q + 0.5 * v), frac(w + 0.31)),
+      depth: 2 * frac(v + q) - 1,
+      phase: 2 * Math.PI * frac(w * 3 + u),
     };
   });
+}
+
+// 立体の雨の1本の、落ち始めてから k（0〜1）の所。W・H は画面の大きさ（px）。
+// 返り値 { x, y: 画面の px（y は下向き）, angle: spin の軸まわりに回った角（ラジアン）}。
+// 落ち方は少しずつ速くなるが、紙吹雪のようにゆっくり（重さのある落下より緩い）。横には流れながら小さく揺れる
+export function rainFall(d, k, W, H) {
+  k = clamp01(k);
+  const margin = FX.rain3d.head * 2.2 * d.size;
+  return {
+    x: d.x * W + d.drift * W * k + FX.rain3d.sway * Math.sin(d.phase + k * Math.PI * 2.2),
+    y: -margin + (H + 2 * margin) * (0.45 * k + 0.55 * k * k),
+    angle: d.turns * 2 * Math.PI * k,
+  };
 }
 
 // 板がはじける: 膨らみ（大きさの倍率）と光（0〜glow）。終わりで元に戻る
