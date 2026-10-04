@@ -20,7 +20,7 @@ import { createResume, restoreRecord, levelSignature, encodeSnapshot, decodeSnap
 import { createSettings, clearRecords, SPEEDS, QUALITIES } from './settings.js';
 import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, DAILY_DIFFICULTY, MAX_RANDOM, isRandomNo, dateKey, isDateKey, dateLabel, dailyBestKey } from './random.js';
 import { rate, clock, createPlayClock, createBests, MAX_STARS } from './rating.js';
-import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
+import { createFeedback, tapCue, eventCue, endCue, BGM_TRACKS } from './feedback.js';
 import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf, pressDepth, releaseDepth, blockerFlash, chainStep, lidMark, sparkOf, rainDrops } from './effects.js';
 import { createPerf, mountPerfPanel, slowFrames } from './perf.js';
 import { TIPS, MIN_MS, MAX_MS, TURN_RAD, startTips, tapTips, labelScrews, createTutorialStore, tutorialEnabled } from './tutorial.js';
@@ -1763,6 +1763,14 @@ showSound();
 // 並んだボタン（.seg）の data-key が設定の名前、各ボタンの data-v が値（'true' / 'false' は真偽値）
 const settingsEl = $('settings');
 const segValue = (b) => (b.dataset.v === 'true' ? true : b.dataset.v === 'false' ? false : b.dataset.v);
+// BGM の曲（F）のボタンは曲の表から作る
+for (const t of BGM_TRACKS) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.dataset.v = t.id;
+  b.textContent = t.label;
+  settingsEl.querySelector('[data-key="bgmTrack"]').append(b);
+}
 function showSettings() {
   for (const seg of settingsEl.querySelectorAll('.seg')) {
     for (const b of seg.querySelectorAll('button')) b.setAttribute('aria-pressed', String(segValue(b) === settings.get(seg.dataset.key)));
@@ -1771,7 +1779,9 @@ function showSettings() {
 for (const seg of settingsEl.querySelectorAll('.seg')) {
   seg.addEventListener('click', (e) => {
     const b = e.target.closest('button');
-    if (b) settings.set(seg.dataset.key, segValue(b));
+    if (!b) return;
+    settings.set(seg.dataset.key, segValue(b));
+    if (seg.dataset.key === 'bgmTrack') settings.set('bgm', true);   // 曲を選んだら聞かせる（BGM が切りなら入れる）
   });
 }
 // 設定が変わったら、すぐ画面に効かせる
@@ -1975,6 +1985,7 @@ window.__app = {
   openStages,
   get reached() { return progress.stage; },
   settings: { get: (k) => settings.get(k), all: () => settings.all() },
+  get bgmTrack() { return feedback.bgmTrack; },   // 鳴っている BGM の曲（鳴っていなければ null）
   get pixelRatio() { return renderer.getPixelRatio(); },
   perf,
   get mascotDrawing() { return mascot.enabled; },

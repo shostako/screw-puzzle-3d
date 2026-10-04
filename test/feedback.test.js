@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   createFeedback, tapCue, eventCue, endCue, VIBRATION, SOUNDS, VOLUME, MASTER, peakOf, soundOf, platePitch,
-  ratchetTimes, RATCHET, BGM, bgmNotes, bgmLength, bgmShouldPlay,
+  ratchetTimes, RATCHET, BGM, BGM_TRACKS, DEFAULT_TRACK, trackOf, bgmNotes, bgmLength, bgmStepSec, bgmShouldPlay,
 } from '../src/feedback.js';
 import { FX } from '../src/effects.js';
 import { createSettings } from '../src/settings.js';
@@ -113,7 +113,7 @@ describe('音の作り（E6）', () => {
       expect(VOLUME[c], c).toBeGreaterThan(0);
       expect(MASTER * VOLUME[c] * peakOf(SOUNDS[c]), c).toBeLessThanOrEqual(1);
     }
-    for (let i = 0; i < bgmLength(); i++) expect(MASTER * VOLUME.bgm * peakOf(bgmNotes(i))).toBeLessThanOrEqual(1);
+    for (const t of BGM_TRACKS) for (let i = 0; i < bgmLength(t.id); i++) expect(MASTER * VOLUME.bgm * peakOf(bgmNotes(i, t.id)), t.id).toBeLessThanOrEqual(1);
   });
 
   it('音量の釣り合い: 毎タップ鳴る音が一番小さく、クリアが一番大きく、BGM は効果音のどれよりも小さい', () => {
@@ -157,15 +157,38 @@ describe('音の作り（E6）', () => {
     for (const c of [2, 3, 4]) expect(MASTER * VOLUME.boxFull * peakOf(soundOf('boxFull', { chain: c }))).toBeLessThanOrEqual(1);
   });
 
-  it('BGM: 8 小節のループで、旋律は和音の音か C 長調の音だけ。どの拍にも何かが鳴る', () => {
-    const scale = new Set([0, 2, 4, 5, 7, 9, 11]);
-    expect(BGM.melody).toHaveLength(BGM.roots.length);
-    for (const bar of BGM.melody) {
-      expect(bar).toHaveLength(BGM.steps);
-      for (const n of bar) if (n != null) expect(scale.has(n % 12), String(n)).toBe(true);
+  it('BGM: どの曲も 8 小節のループで、旋律はその曲の音階の音だけ。どの拍（4 分音符）にも何かが鳴る', () => {
+    for (const t of BGM_TRACKS) {
+      const scale = new Set(t.scale);
+      expect(t.melody, t.id).toHaveLength(8);
+      expect(t.roots, t.id).toHaveLength(8);
+      expect(t.chords, t.id).toHaveLength(8);
+      for (const bar of t.melody) {
+        expect(bar, t.id).toHaveLength(t.steps);
+        for (const n of bar) if (n != null) expect(scale.has(n % 12), `${t.id} ${n}`).toBe(true);
+      }
+      for (let i = 0; i < bgmLength(t.id); i++) if (i % 2 === 0) expect(bgmNotes(i, t.id).length, `${t.id} ${i}`).toBeGreaterThan(0);
+      expect(bgmNotes(bgmLength(t.id), t.id), t.id).toEqual(bgmNotes(0, t.id));   // ループする
     }
-    for (let i = 0; i < bgmLength(); i++) if (i % 2 === 0) expect(bgmNotes(i).length, String(i)).toBeGreaterThan(0);
-    expect(bgmNotes(bgmLength())).toEqual(bgmNotes(0));   // ループする
+  });
+
+  it('BGM の曲（F）: 6 曲あり、初期値は E6 のオルゴール。曲ごとに速さか拍子か楽器が違う', () => {
+    expect(BGM_TRACKS).toHaveLength(6);
+    expect(DEFAULT_TRACK).toBe('orgel');
+    expect(BGM).toBe(trackOf('orgel'));
+    expect(BGM.bpm).toBe(100);
+    expect(new Set(BGM_TRACKS.map((t) => t.id)).size).toBe(6);
+    expect(new Set(BGM_TRACKS.map((t) => t.voice)).size).toBe(6);
+    for (const t of BGM_TRACKS) expect(t.label.length, t.id).toBeGreaterThan(0);
+    expect(trackOf('nothing')).toBe(BGM);   // 知らない曲は初期値
+    expect(bgmNotes(0, 'nothing')).toEqual(bgmNotes(0));
+    expect(bgmStepSec('lullaby')).toBeGreaterThan(bgmStepSec('factory'));
+    expect(bgmLength('lullaby')).toBe(48);   // 3 拍子（6 × 8）
+  });
+
+  it('BGM の曲（F）: どの曲もオルゴールより目立って大きくならない（同時に鳴る大きさの和の最大が 1.25 倍以内）', () => {
+    const loud = (id) => Math.max(...Array.from({ length: bgmLength(id) }, (_, i) => peakOf(bgmNotes(i, id))));
+    for (const t of BGM_TRACKS) expect(loud(t.id), t.id).toBeLessThanOrEqual(loud('orgel') * 1.25);
   });
 
   it('BGM を鳴らすのは、音が入り・BGM が入り・アプリが表にある時だけ', () => {
@@ -247,6 +270,20 @@ describe('鳴らすもの（Web Audio の代わりの記録係で）', () => {
     const { fb } = setup({ bgm: false });
     fb.unlock();
     expect(fb.bgmPlaying).toBe(false);
+  });
+
+  it('曲を変えると、鳴っている BGM が新しい曲に替わる。BGM が切りなら鳴らさない', () => {
+    const { settings, fb } = setup({ bgmTrack: 'warabe' });
+    fb.unlock();
+    expect(fb.bgmTrack).toBe('warabe');
+    settings.set('bgmTrack', 'factory');
+    expect(fb.bgmPlaying).toBe(true);
+    expect(fb.bgmTrack).toBe('factory');
+    settings.set('bgm', false);
+    settings.set('bgmTrack', 'stars');
+    expect(fb.bgmPlaying).toBe(false);
+    settings.set('bgm', true);
+    expect(fb.bgmTrack).toBe('stars');
   });
 
   it('アプリが裏に回ると BGM を止めて休ませ、表に戻ると再開する', async () => {
