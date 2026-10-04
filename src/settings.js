@@ -1,10 +1,11 @@
 // 設定（後回しの項目「設定」）。音・BGM・振動・回す速さ・画質・ネジまるの表示・ねじ穴の形（E2）を端末に保存する。
 // 保存先は progress.js と同じく localStorage の形を外から渡す（テストでは Map で代用）。DOM にも描画にも依存しない。
-// 記録を消す（clearRecords）は、到達したステージと自己ベストと途中の局面を消し、設定は残す。
+// 記録を消す（clearRecords）は、到達したステージと自己ベストと途中の局面と見せた導入（E4）を消し、設定は残す。
 
 import { STORAGE_KEY as STAGE_KEY } from './progress.js';
 import { BEST_KEY } from './rating.js';
 import { RESUME_KEY } from './resume.js';
+import { TUTORIAL_KEY } from './tutorial.js';
 
 export const SETTINGS_KEY = 'screw-puzzle-3d.settings';
 // M8 からの音と振動の入り切り（'on' / 'off'）。新しい保存が無いときだけ読む
@@ -84,9 +85,9 @@ export function createSettings(storage) {
   };
 }
 
-// 記録（到達したステージと自己ベスト、遊んでいる途中の局面）を消す。設定は残す
+// 記録（到達したステージと自己ベスト、遊んでいる途中の局面、見せた導入）を消す。設定は残す
 export function clearRecords(storage) {
-  for (const key of [STAGE_KEY, BEST_KEY, RESUME_KEY]) {
+  for (const key of [STAGE_KEY, BEST_KEY, RESUME_KEY, TUTORIAL_KEY]) {
     try {
       storage?.removeItem(key);
     } catch {

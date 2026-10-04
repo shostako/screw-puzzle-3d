@@ -32,7 +32,7 @@
   </div>
   <div id="boxes"></div>
   <div id="slots"></div>
-  <p id="hint">1本指で回す・ねじをタップで外す</p>
+  <p id="hint"></p>
 </header>
 <nav id="tools">
   <button id="undo" type="button" aria-label="1手戻す" title="1手戻す" disabled>
@@ -49,6 +49,12 @@
   </button>
 </nav>
 <canvas id="mascot" aria-hidden="true"></canvas>
+<!-- 初めての導入（E4）: ネジまるの吹き出しと、手本の半透明の手（src/tutorial.js が何をいつ出すかを決める） -->
+<p id="coach" role="status" hidden></p>
+<div id="coach-hand" aria-hidden="true" hidden>
+  <i class="ripple"></i>
+  <svg viewBox="0 0 48 56"><path d="M12 30V8a5 5 0 0 1 10 0v14.5a4.5 4.5 0 0 1 9 1.5a4.5 4.5 0 0 1 9 3V40c0 7-5 12-12 12h-7c-4 0-7-2-9-5l-7-9c-2-2.5-1.5-6 1-7.5c2-1.2 4.5-.8 6 1z"/><path class="crease" d="M22 22.5v6M31 24v5"/></svg>
+</div>
 <div id="flyers"></div>
 <div id="rain"></div>
 <div id="overlay" hidden>
@@ -111,7 +117,7 @@
     <p class="s-note">「色ごと」にすると、色を形でも見分けられます</p>
     <div class="s-row"><span>ネジまる</span><div class="seg" data-key="mascot" role="group" aria-label="ネジまる"><button type="button" data-v="true">出す</button><button type="button" data-v="false">隠す</button></div></div>
     <button id="s-clear" type="button">記録を消す</button>
-    <p class="s-note">到達したステージと自己ベストを消します</p>
+    <p class="s-note">到達したステージと自己ベスト、遊び方の案内を消します</p>
     <button id="s-close" class="sub" type="button">もどる</button>
   </div>
 </div>

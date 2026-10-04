@@ -101,6 +101,11 @@
 //   boot-stage1.png   「はじめる」を指でタップして出た最初のステージ
 //   あわせて、同梱の丸ゴシックで描いていること、棒が wasm のバイト数で伸びること、タイトルの間は時間を数えないこと、
 //   自動の操作（navigator.webdriver）ではタイトルを挟まず盤面から始まることを確かめる
+//   （初めての導入、E4。保存の無い新しい端末として ?tutorial=on で開き、ステージ 1 から 4 までを順に遊ぶ。続けて 8 の車）
+//   tutorial-<ステージ>-<導入>.png  導入が出たところ（ネジまるの吹き出しと手本の手）。tap・turn（1）、label（2）、inner（4）、slot（待機スロットに初めて入った時）、
+//                                    parts（8 の車）、held（子の部品が残る親の最後のねじ）、rescue（行き止まりから続けた時）
+//   あわせて、各導入がちょうど1回ずつ出ること、ねじを外す・回すと閉じること、開き直しても出ないこと、
+//   ふだんの「1本指で回す・ねじをタップで外す」の行が出ないこと、記録を消すとまた出ることを確かめる
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -110,7 +115,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光、boot は起動とタイトル（E3）、feel は手触りと演出（E5）
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光、boot は起動とタイトル（E3）、feel は手触りと演出（E5）、tutorial は初めての導入（E4）
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -456,6 +461,156 @@ async function bootShots(context, errors, outside) {
     await page.waitForSelector('#boot', { state: 'hidden' });
     if (await page.evaluate(() => window.__app.booting)) throw new Error('自動の操作でタイトルが出た');
   }
+  await context.close();
+}
+
+// 初めての導入（E4）。保存の無い端末で ?tutorial=on（自動の操作ではふだん導入を出さない）
+async function tutorialShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const shot = new Map();   // 導入 → 撮ったステージ
+  const tipNow = () => page.evaluate(() => window.__app.tip);
+  let onScreen = null;
+  // 導入が出ていれば（まだ撮っていなければ）撮る。出す前の間（main.js の delay）と吹き出しの出る動きを待つ
+  const catchTip = async (n, wait = 1100) => {
+    await page.waitForTimeout(wait);
+    const id = await tipNow();
+    // 前に撮った導入がまだ出ている間（ページの中から外したねじは「タップ」にならないので、読む間の後も閉じない）は数えない
+    if (id === onScreen) return null;
+    onScreen = id;
+    if (!id) return null;
+    if (shot.has(id)) throw new Error(`導入 ${id} が2回出た（ステージ ${shot.get(id)} と ${n}）`);
+    shot.set(id, n);
+    await page.waitForTimeout(450);
+    const file = join(outDir, `tutorial-${n}-${id}.png`);
+    await page.screenshot({ path: file });
+    console.log(`screenshot: ${file}`);
+    return id;
+  };
+  const expectTip = async (n, id) => {
+    const got = await catchTip(n);
+    if (got !== id) throw new Error(`ステージ ${n} で導入 ${id} のはずが ${got}`);
+  };
+  // 手順どおりに外しながら、出た導入を撮る。払い落としのために向きを変えたら、最後の斜めの向きに戻す
+  const playWatching = async (n, { before } = {}) => {
+    const path = await page.evaluate(() => window.__app.solution);
+    let k = 0;
+    for (const id of path) {
+      if (before) await before();
+      for (let tries = 0; ; tries++) {
+        const reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
+        if (reason === 'ok' || reason === 'gone') break;
+        if (reason === 'over' && await page.evaluate(() => window.__app.game.status) === 'cleared') return;
+        if (reason !== 'blocked' || tries >= 12) throw new Error(`手順のねじ ${id} を外せない: ${reason}`);
+        await page.evaluate((v) => window.__app.view(...v, 1), VIEWS[k++ % VIEWS.length]);
+        await waitRendered(page);
+      }
+      await waitRendered(page);
+      if (await page.evaluate(() => window.__app.game.status) !== 'playing') return;
+      await page.waitForFunction(() => window.__app.tip, null, { timeout: 900 }).catch(() => {});
+      await catchTip(n, 0);
+    }
+  };
+  const nextStage = async (n) => {
+    await page.waitForSelector('#overlay:not([hidden]) #next:not([hidden])');
+    if (await tipNow()) throw new Error('クリアの画面で導入が出ている');
+    const box = await page.locator('#next').boundingBox();
+    await tap(cdp, [box.x + box.width / 2, box.y + box.height / 2]);
+    await page.waitForFunction((n) => window.__app.stage === n && window.__app.rendered, n);
+  };
+
+  await page.goto(`${url}?tutorial=on`);
+  await waitRendered(page);
+  if (await page.evaluate(() => document.getElementById('hint').textContent)) throw new Error('案内の行に遊び方の一言が残っている');
+  // ステージ 1: タップの手本 → 見えている面を外しきると、回す手本
+  await expectTip(1, 'tap');
+  for (let first = true; ; first = false) {
+    const [id] = await page.evaluate(() => {
+      const seen = new Set(window.__app.visibleScrews().map((s) => s.id));
+      return window.__app.legal().filter((id) => seen.has(id));
+    });
+    if (!id) break;
+    await tap(cdp, await page.evaluate((id) => window.__app.screenOf(id), id));
+    await waitRendered(page);
+    if (first && await tipNow() === 'tap') throw new Error('ねじを外してもタップの導入が閉じない');
+  }
+  await expectTip(1, 'turn');
+  await drag(cdp, [195, 600], [195 - 170, 600 - 40]);
+  await page.waitForTimeout(400);
+  if (await tipNow() === 'turn') throw new Error('回しても回す導入が閉じない');
+  await playWatching(1);
+  // ステージ 2: 札の下のねじ
+  await nextStage(2);
+  await expectTip(2, 'label');
+  await playWatching(2);
+  for (const n of [3, 4]) {
+    await nextStage(n);
+    if (n === 4) await expectTip(4, 'inner');
+    else if (await catchTip(n)) throw new Error(`ステージ ${n} を開いただけで導入が出た`);
+    await playWatching(n);
+  }
+  // ステージ 8（車）: 部品。子の部品が残る親の最後のねじをタップして held
+  await page.goto(`${url}?stage=8&tutorial=on`);
+  await waitRendered(page);
+  await expectTip(8, 'parts');
+  await page.waitForTimeout(1600);
+  await tap(cdp, [20, 400]);   // 読む間の後は、何かをタップすると閉じる
+  await page.waitForTimeout(400);
+  if (await tipNow() === 'parts') throw new Error('タップしても部品の導入が閉じない');
+  // 片側の窓と客室のねじを外せるものから外していき、客室の最後の 1 本で held になるまで（D5 の theme-car-held と同じ手）
+  const ids = (plate) => page.evaluate((plate) => {
+    const g = window.__app.game;
+    return g.state.level.screws.filter((x) => x.plate === plate && g.state.where[x.id] === 'board').map((x) => x.id);
+  }, plate);
+  let last = null;
+  for (let k = 0; k < 24 && last !== 'held'; k++) {
+    for (const id of [...await ids('window1'), ...await ids('cabin')]) {
+      last = await page.evaluate((id) => window.__app.tapScrew(id), id);
+      await waitRendered(page);
+      if (last === 'held') break;
+      await page.waitForFunction(() => window.__app.tip, null, { timeout: 900 }).catch(() => {});
+      await catchTip(8, 0);
+    }
+    if (last !== 'held') {
+      await page.evaluate((v) => window.__app.view(...v, 1), VIEWS[k % VIEWS.length]);
+      await waitRendered(page);
+    }
+  }
+  if (last !== 'held') throw new Error('客室の最後のねじが held にならない');
+  await page.evaluate(() => window.__app.view(0.35, 2.4, 0, 0.9));
+  await expectTip(8, 'held');
+  // 詰みかけ: 行き止まりの画面から「このまま続ける」で、ヒントと戻るの導入
+  await page.goto(`${url}?stage=5&tutorial=on`);
+  await waitRendered(page);
+  await page.evaluate(async () => {
+    const [id] = window.__app.legal();
+    window.__app.tapScrew(id);
+  });
+  await waitRendered(page);
+  await page.evaluate(() => window.__app.deadEnd());
+  const resume = await page.locator('#resume').boundingBox();
+  await tap(cdp, [resume.x + resume.width / 2, resume.y + resume.height / 2]);
+  await expectTip(5, 'rescue');
+  // 全部ちょうど1回ずつ出た（slot はステージ 2〜4 か 8 のどこかで出る）
+  const all = ['tap', 'turn', 'label', 'inner', 'parts', 'slot', 'held', 'rescue'];
+  const missing = all.filter((id) => !shot.has(id));
+  if (missing.length) throw new Error(`出なかった導入: ${missing.join(', ')}`);
+  console.log(`導入: ${[...shot].map(([id, n]) => `${id}（${n}）`).join('・')}`);
+  // 開き直しても出ない。記録を消すとまた出る
+  await page.goto(`${url}?stage=1&tutorial=on`);
+  await waitRendered(page);
+  if (await catchTip(1, 1500)) throw new Error('一度見せた導入がまた出た');
+  await page.evaluate(() => localStorage.removeItem('screw-puzzle-3d.stage'));
+  await page.evaluate(() => { window.__app.openSettings(); });
+  for (let i = 0; i < 2; i++) {
+    const b = await page.locator('#s-clear').boundingBox();
+    await tap(cdp, [b.x + b.width / 2, b.y + b.height / 2]);
+  }
+  await page.waitForURL((u) => !u.search.includes('tutorial'));
+  await page.waitForFunction(() => window.__app?.tipsSeen && window.__app.tipsSeen.length === 0);
   await context.close();
 }
 
@@ -1825,6 +1980,7 @@ try {
   if (only('feel')) await feelShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('resume')) await resumeShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('boot')) await bootShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('tutorial')) await tutorialShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('chapter')) await chapterShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('progress')) await progressShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('frame')) await frameShots(browser, errors, outside);
