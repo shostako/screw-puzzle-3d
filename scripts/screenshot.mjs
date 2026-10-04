@@ -560,23 +560,28 @@ async function tutorialShots(context, errors, outside) {
   await tap(cdp, [20, 400]);   // 読む間の後は、何かをタップすると閉じる
   await page.waitForTimeout(400);
   if (await tipNow() === 'parts') throw new Error('タップしても部品の導入が閉じない');
-  const tryHeld = async () => {
-    if (shot.has('held')) return;
-    const last = await page.evaluate(() => {
-      const g = window.__app.game, modes = window.__app.plateModes();
-      const plates = g.state.level.plates;
-      return plates.filter((p) => plates.some((c) => c.parent === p.id && modes[c.id] !== 'gone'))
-        .map((p) => g.state.level.screws.filter((s) => s.plate === p.id && g.state.where[s.id] === 'board'))
-        .filter((ss) => ss.length === 1).map((ss) => ss[0].id);
-    });
-    for (const id of last) {
-      if (await page.evaluate((id) => window.__app.tapScrew(id), id) === 'held') {
-        await expectTip(8, 'held');
-        return;
-      }
+  // 片側の窓と客室のねじを外せるものから外していき、客室の最後の 1 本で held になるまで（D5 の theme-car-held と同じ手）
+  const ids = (plate) => page.evaluate((plate) => {
+    const g = window.__app.game;
+    return g.state.level.screws.filter((x) => x.plate === plate && g.state.where[x.id] === 'board').map((x) => x.id);
+  }, plate);
+  let last = null;
+  for (let k = 0; k < 24 && last !== 'held'; k++) {
+    for (const id of [...await ids('window1'), ...await ids('cabin')]) {
+      last = await page.evaluate((id) => window.__app.tapScrew(id), id);
+      await waitRendered(page);
+      if (last === 'held') break;
+      await page.waitForFunction(() => window.__app.tip, null, { timeout: 900 }).catch(() => {});
+      await catchTip(8, 0);
     }
-  };
-  await playWatching(8, { before: tryHeld });
+    if (last !== 'held') {
+      await page.evaluate((v) => window.__app.view(...v, 1), VIEWS[k % VIEWS.length]);
+      await waitRendered(page);
+    }
+  }
+  if (last !== 'held') throw new Error('客室の最後のねじが held にならない');
+  await page.evaluate(() => window.__app.view(0.35, 2.4, 0, 0.9));
+  await expectTip(8, 'held');
   // 詰みかけ: 行き止まりの画面から「このまま続ける」で、ヒントと戻るの導入
   await page.goto(`${url}?stage=5&tutorial=on`);
   await waitRendered(page);
