@@ -6,9 +6,23 @@
 <meta name="theme-color" content="#9fd3ff">
 <title>ねじ外しパズル 3D</title>
 <link rel="icon" href="data:,">
+<link rel="preload" href="./src/assets/fonts/rounded-800.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="./src/style.css">
 </head>
 <body>
+<!-- 起動の画面（E3）: JS と物理の wasm を読む間に出す。初めて開いた時はそのままタイトルになり「はじめる」を待つ（src/boot.js） -->
+<div id="boot">
+  <div class="boot-card">
+    <div class="boot-art">
+      <img class="boot-idle" src="./src/assets/nejimaru.webp" alt="" width="301" height="420">
+      <img class="boot-jump" src="./src/assets/nejimaru-jump.webp" alt="" width="346" height="420">
+    </div>
+    <h1 class="boot-logo" aria-label="ねじ外しパズル 3D"><span class="bl-main">ねじ外し</span><span class="bl-sub">パズル<b>3D</b></span></h1>
+    <div id="boot-bar" role="progressbar" aria-label="読み込み" aria-valuemin="0" aria-valuemax="100"><i></i></div>
+    <p class="boot-tag">立体を回して、ねじを ぜんぶ 外そう</p>
+    <button id="boot-start" type="button" hidden>はじめる</button>
+  </div>
+</div>
 <canvas id="stage"></canvas>
 <header id="hud">
   <div id="bar">

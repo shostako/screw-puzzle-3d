@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { THEME, cssVariables, skyFor, skyVariables } from '../src/theme.js';
+import { THEME, cssVariables, skyFor, skyVariables, mixHex } from '../src/theme.js';
 import { COLORS } from '../src/generator.js';
 import { buildBoard, BOLT, driveOf, driveContours, driveIcon, setDrives, contactNeighbors, contactShape } from '../src/scene.js';
 import { BOX_LEVEL } from '../src/levels/box.js';
-import { stageLevel } from '../src/stages.js';
+import { stageLevel, CHAPTERS } from '../src/stages.js';
 import { SCREW_RADIUS, outlineOf } from '../src/board.js';
 import { generateLevel } from '../src/generator.js';
 import { THEMES } from '../src/themes.js';
@@ -215,6 +215,25 @@ describe('質感と光（E2）', () => {
     expect(skyFor(undefined).sky).toEqual(THEME.sky);
   });
 
+  it('章の色み（E3）: 章の空の名前ごとに色があり、題材の空に重ねる。上ほど強く、マットはごく弱く', () => {
+    for (const ch of CHAPTERS) for (const c of THEME.chapterTints[ch.sky]) expect(c).toMatch(/^#[0-9a-f]{6}$/);
+    expect(mixHex('#000000', '#ffffff', 0.5)).toBe('#808080');
+    expect(mixHex('#123456', '#abcdef', 0)).toBe('#123456');
+    const dist = (a, b) => Math.hypot(...[0, 1, 2].map((i) => Number.parseInt(a.slice(1 + 2 * i, 3 + 2 * i), 16) - Number.parseInt(b.slice(1 + 2 * i, 3 + 2 * i), 16)));
+    for (const kind of [...THEMES, 'box']) {
+      const base = skyVariables(kind);
+      const tops = new Set();
+      for (const ch of CHAPTERS) {
+        const v = skyVariables(kind, ch.sky);
+        for (const k of Object.keys(base)) expect(v[k]).toMatch(/^#[0-9a-f]{6}$/);
+        expect(dist(v['--sky-top'], base['--sky-top'])).toBeGreaterThan(dist(v['--mat'], base['--mat']));
+        tops.add(v['--sky-top']);
+      }
+      expect(tops.size).toBe(CHAPTERS.length);   // 同じ題材でも章ごとに空が違う
+    }
+    expect(skyVariables('car', 'unknown')).toEqual(skyVariables('car'));
+  });
+
   it('白に近い板（明るさ 0.9 より上）はマットより暗い。板の色は D1 の淡い色より色味がある', () => {
     const lum = (hex) => {
       const c = new THREE.Color(hex);
@@ -222,5 +241,7 @@ describe('質感と光（E2）', () => {
     };
     for (const c of [...THEME.plateColors, ...Object.values(THEME.partColors)]) expect(lum(c)).toBeLessThan(lum(THEME.mat));
     for (const kind of THEMES) for (const c of THEME.plateColors) expect(lum(c)).toBeLessThan(lum(skyFor(kind).mat));
+    // 章の色みを重ねたマットでも、白い板が溶けない
+    for (const kind of [...THEMES, 'box']) for (const ch of CHAPTERS) for (const c of THEME.plateColors) expect(lum(c)).toBeLessThan(lum(skyVariables(kind, ch.sky)['--mat']));
   });
 });

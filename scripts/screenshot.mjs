@@ -95,6 +95,12 @@
 //   frame-zoom.png           ピンチで寄ったところ（「向きを戻す」で収めた距離へ戻ることも確かめる）
 //   あわせて、はじくと指を離した後も回り続けて止まること、止めてから離すと回らないこと、
 //   惰性で回っている所に指を置くと止まり、その指はねじを外さないことを確かめる
+//   （起動とタイトル、E3。保存の無い新しい端末として ?boot=title で開き、物理の wasm を遅らせて読み込み中を撮る）
+//   boot-loading.png  読み込み中（ネジまると進みの棒）
+//   boot-title.png    読み込みが終わってタイトル（初めての端末。「はじめる」）
+//   boot-stage1.png   「はじめる」を指でタップして出た最初のステージ
+//   あわせて、同梱の丸ゴシックで描いていること、棒が wasm のバイト数で伸びること、タイトルの間は時間を数えないこと、
+//   自動の操作（navigator.webdriver）ではタイトルを挟まず盤面から始まることを確かめる
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -104,13 +110,13 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光、boot は起動とタイトル（E3）
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
 const VIEWPORT = { width: 390, height: 844 };
 
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.wasm': 'application/wasm' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml', '.json': 'application/json', '.wasm': 'application/wasm', '.woff2': 'font/woff2', '.webp': 'image/webp' };
 
 function serve() {
   const server = createServer(async (req, res) => {
@@ -391,6 +397,68 @@ const themeShots = [
 // ステージの進行（M7）。新しい端末（保存なし）でステージ 1 から順にクリアして進め、再読み込みで続きから始まることを確かめる
 // 章と難しさの曲線（E8）
 const CHAPTER_SHOTS = (process.env.CHAPTER ?? '10,11,20,22,30,33,40,42,50,60').split(',').map(Number);
+async function bootShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  // 物理の wasm を遅らせて、読み込み中の画面を撮る（棒は届いたバイト数で伸びる）
+  let release;
+  const held = new Promise((ok) => { release = ok; });
+  await page.route('**/*.wasm', async (route) => {
+    await held;
+    await route.continue();
+  });
+  await page.goto(`${url}?boot=title`);
+  await page.waitForSelector('#boot.scripted', { timeout: 20000 }).catch(() => {});
+  await page.waitForTimeout(600);
+  const loading = join(outDir, 'boot-loading.png');
+  await page.screenshot({ path: loading });
+  console.log(`screenshot: ${loading}`);
+  const barMid = await page.evaluate(() => getComputedStyle(document.getElementById('boot-bar') ?? document.body).getPropertyValue('--p'));
+  release();
+  await waitRendered(page);
+  const isE3 = await page.evaluate(() => 'booting' in window.__app);
+  if (isE3) {
+    await page.waitForSelector('#boot-start:not([hidden])');
+    await page.waitForTimeout(900);   // タイトルの出る動きを待つ
+    const p = await page.evaluate(() => getComputedStyle(document.getElementById('boot-bar')).getPropertyValue('--p'));
+    if (!(Number(barMid) < 0.5) || Number(p) !== 1) throw new Error(`進みの棒が合わない: 読み込み中 ${barMid}、終わり ${p}`);
+    const font = await page.evaluate(async () => {
+      await document.fonts.ready;
+      return ['400', '700', '800'].every((w) => document.fonts.check(`${w} 20px "Neji Rounded"`, 'ねじ外しパズル'))
+        && [...document.fonts].filter((f) => f.family.includes('Neji') && f.status === 'loaded').length;
+    });
+    if (!font) throw new Error('同梱の丸ゴシックが読めていない');
+    const t0 = await page.evaluate(() => window.__app.playSeconds);
+    await page.waitForTimeout(1200);
+    if (await page.evaluate(() => window.__app.playSeconds) !== t0) throw new Error('タイトルの間に遊んだ時間を数えている');
+  }
+  const title = join(outDir, 'boot-title.png');
+  await page.screenshot({ path: title });
+  console.log(`screenshot: ${title}`);
+  if (isE3) {
+    const box = await page.locator('#boot-start').boundingBox();
+    const cdp = await context.newCDPSession(page);
+    await tap(cdp, [box.x + box.width / 2, box.y + box.height / 2]);
+    await page.waitForSelector('#boot', { state: 'hidden' });
+    await waitRendered(page);
+    if (await page.evaluate(() => window.__app.booting || window.__app.stage !== 1)) throw new Error('「はじめる」の後にステージ 1 にならない');
+  }
+  const first = join(outDir, 'boot-stage1.png');
+  await page.screenshot({ path: first });
+  console.log(`screenshot: ${first}`);
+  if (isE3) {
+    // 自動の操作（webdriver）では、初めての端末でもタイトルを挟まない（ほかの組のスクリーンショットとテストのため）
+    await page.evaluate(() => localStorage.clear());
+    await page.goto(url);
+    await waitRendered(page);
+    await page.waitForSelector('#boot', { state: 'hidden' });
+    if (await page.evaluate(() => window.__app.booting)) throw new Error('自動の操作でタイトルが出た');
+  }
+  await context.close();
+}
+
 async function chapterShots(context, errors, outside) {
   const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -1568,6 +1636,7 @@ try {
   if (only('settings')) await settingsShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('look')) await lookShots(browser, errors, outside);
   if (only('resume')) await resumeShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('boot')) await bootShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('chapter')) await chapterShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('progress')) await progressShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('frame')) await frameShots(browser, errors, outside);
