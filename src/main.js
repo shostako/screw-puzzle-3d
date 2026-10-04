@@ -13,12 +13,12 @@ import { fixedBlocker, sweepHits, outlineOf } from './board.js';
 import { initPhysics, createPhysics, syncPlates, settle, STEP } from './physics.js';
 import { generateLevel, ALL_KINDS } from './generator.js';
 import { BOX_LEVEL } from './levels/box.js';
-import { stageLevel, chapterOf, START_VIEW as START_EULER } from './stages.js';
+import { stageLevel, chapterOf, nextVariant, MAX_VARIANT, START_VIEW as START_EULER } from './stages.js';
 import { createProgress, deviceStorage } from './progress.js';
 import { chapterView, chapterList, totalStars, finishesChapter, newKinds, KIND_NAMES } from './chapters.js';
 import { createResume, restoreRecord, levelSignature, encodeSnapshot, decodeSnapshot, physicsAgrees } from './resume.js';
 import { createSettings, clearRecords, SPEEDS, QUALITIES } from './settings.js';
-import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, MAX_RANDOM, isRandomNo, dateKey, isDateKey, dateLabel, dailyBestKey } from './random.js';
+import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, DAILY_DIFFICULTY, MAX_RANDOM, isRandomNo, dateKey, isDateKey, dateLabel, dailyBestKey } from './random.js';
 import { rate, clock, createPlayClock, createBests, MAX_STARS } from './rating.js';
 import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
 import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf, pressDepth, releaseDepth, blockerFlash, chainStep, lidMark, sparkOf, rainDrops } from './effects.js';
@@ -52,13 +52,15 @@ const askedByUrl = ['stage', 'random', 'daily'].some((k) => query.has(k));
 let pending = freePlay || askedByUrl ? null : resumeStore.load();
 if (pending?.mode.type === 'random' && !DIFFICULTIES[pending.mode.difficulty]) pending = null;
 if (pending?.mode.type === 'daily' && !isDateKey(pending.mode.key)) pending = null;
-// ステージをまだ1本も外していなければ、続きではなく到達したステージから（おまかせ・今日の1問は外す前でも遊び方を続ける）
-if (pending?.mode.type === 'stage' && !pending.path.length) pending = null;
+// ステージの別の盤面（F）の番号が壊れていれば捨てる
+if (pending?.mode.variant !== undefined && !(Number.isInteger(pending.mode.variant) && pending.mode.variant >= 1 && pending.mode.variant <= MAX_VARIANT)) pending = null;
+// ステージをまだ1本も外していなければ、続きではなく到達したステージから（おまかせ・今日の1問・ステージの別の盤面は外す前でも遊び方を続ける）
+if (pending?.mode.type === 'stage' && !pending.path.length && !pending.mode.variant) pending = null;
 const askedStage = Number.parseInt(query.get('stage') ?? '', 10);
 let stage = Number.isInteger(askedStage) && askedStage >= 1 ? askedStage
   : pending?.mode.type === 'stage' ? pending.stage : progress.stage;
 
-// 今の遊び方: { type: 'stage' } / { type: 'daily', key: 日付の数 } / { type: 'random', no: 番号, difficulty } / { type: 'free' }
+// 今の遊び方: { type: 'stage', variant?: 別の盤面の番号（F） } / { type: 'daily', key: 日付の数 } / { type: 'random', no: 番号, difficulty } / { type: 'free' }
 const today = () => dateKey(new Date());
 function askedMode() {
   if (freePlay) return { type: 'free' };
@@ -82,7 +84,7 @@ function levelFor() {
   }
   if (mode.type === 'daily') return dailyLevel(mode.key);
   if (mode.type === 'random') return randomLevel(mode.no, mode.difficulty);
-  return stageLevel(stage);
+  return stageLevel(stage, mode.variant ?? 0);
 }
 // 自己ベストを覚える名前（おまかせは 1 回きりなので覚えない）
 const bestKey = () => (mode.type === 'stage' ? stage : mode.type === 'daily' ? dailyBestKey(mode.key) : null);
@@ -913,6 +915,7 @@ function showEnd(status) {
     : chapterDone ? `第${chapterOf(stage + 1).no}章へ` : '次のステージへ';
   // 詰みからは、解ける所まで一気に戻すか、1手戻す
   showRewindButtons(!cleared);
+  $('end-other').hidden = cleared || freePlay;
   $('resume').hidden = true;
   $('again').textContent = cleared ? 'もう一度' : 'やり直す';
   $('again').classList.toggle('sub', next || !cleared);
@@ -1046,7 +1049,9 @@ function modeTitle(m = mode) {
   if (m.type === 'random') return [`おまかせ・${DIFFICULTIES[m.difficulty].label}`, `#${m.no}`];
   // 章（E8）と、章の中の何番目か
   const ch = chapterOf(stage);
-  return [`ステージ ${stage}`, `第${ch.no}章「${ch.title}」 ${ch.pos}/${ch.last - ch.first + 1}`];
+  const pos = `${ch.pos}/${ch.last - ch.first + 1}`;
+  // 別の盤面（F）は章の名前を省いて「別の問題」と添える（1 行に収める）
+  return [`ステージ ${stage}`, m.variant ? `第${ch.no}章 ${pos}・別の問題` : `第${ch.no}章「${ch.title}」 ${pos}`];
 }
 function showStage() {
   const [title, sub] = modeTitle();
@@ -1054,6 +1059,7 @@ function showStage() {
   $('subtitle').textContent = sub;
   $('subtitle').hidden = !sub;
   $('mode-btn').disabled = freePlay;
+  $('other-btn').hidden = freePlay;
 }
 
 // 遊び方を切り替えて盤面を作る。盤面の生成に少しかかるので、先に表示を切り替えてから作る
@@ -1067,6 +1073,7 @@ async function loadMode(next) {
   $('overlay').hidden = true;
   $('menu').hidden = true;
   $('stages').hidden = true;
+  $('other').hidden = true;
   showStage();
   playClock.pause();
   hint.textContent = `${mode.type === 'stage' ? modeTitle()[0] : modeTitle().join(' ').trim()} を組み立て中…`;
@@ -1095,6 +1102,35 @@ function nextStage() {
   return loadMode({ type: 'stage' });
 }
 
+// ---- 別の問題（F、2026-10-04 実機での指摘） ----
+// 遊んでいる最中でも始めでも、今と同じ難しさの別の盤面へ替える。ステージは同じ設定（形・段・条件）の別のシードの盤面で、
+// クリアすればそのステージのクリア（星と自己ベストもそのステージに付く）。おまかせは同じ難しさの次の番号、
+// 今日の1問は 1 日 1 問なので、同じ難しさ（ふつう）のおまかせへ
+function otherMode() {
+  if (mode.type === 'stage') return { type: 'stage', variant: nextVariant(mode.variant) };
+  if (mode.type === 'random') return { type: 'random', no: freshRandomNo(), difficulty: mode.difficulty };
+  if (mode.type === 'daily') return { type: 'random', no: freshRandomNo(), difficulty: DAILY_DIFFICULTY };
+  return null;
+}
+function switchOther() {
+  const next = otherMode();
+  if (next) loadMode(next);
+}
+// ねじを 1 本でも外していれば、進みが消えるので確かめる（始めと、詰み・行き止まりのカードからはすぐ替える）
+function askOther() {
+  if (freePlay || loading || screenOpen()) return;
+  if (game.status === 'playing' && game.path.length && $('overlay').hidden) {
+    playClock.pause();
+    $('other').hidden = false;
+    return;
+  }
+  switchOther();
+}
+function closeOther() {
+  $('other').hidden = true;
+  if (game.status === 'playing' && !document.hidden) playClock.resume();
+}
+
 // ---- 遊び方を選ぶ画面（D6） ----
 
 function openMenu() {
@@ -1120,7 +1156,7 @@ function pickMode(next) {
   return loadMode(next);
 }
 // 遊び方・ステージ一覧・設定のどれかが開いているか（開いている間は遊んだ時間を数えない）
-const screenOpen = () => boot.open || !$('menu').hidden || !$('stages').hidden || !$('settings').hidden;
+const screenOpen = () => boot.open || !$('menu').hidden || !$('stages').hidden || !$('settings').hidden || !$('other').hidden;
 
 // ---- ステージ一覧（E9）: 遊び方の画面の「ステージ」から。章ごとにステージの番号と自己ベストの星を並べる ----
 // クリア済みのステージは選んで遊び直せる（到達は戻らない。progress.cleared は先へしか進めない）。まだのステージは鍵
@@ -1419,6 +1455,7 @@ function showDeadEnd() {
   $('end-score').hidden = true;
   $('next').hidden = true;
   showRewindButtons(true);
+  $('end-other').hidden = freePlay;
   $('resume').hidden = false;
   $('again').textContent = 'やり直す';
   $('again').classList.add('sub');
@@ -1546,6 +1583,10 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 $('restart').addEventListener('click', restart);
+$('other-btn').addEventListener('click', askOther);
+$('o-yes').addEventListener('click', switchOther);
+$('o-no').addEventListener('click', closeOther);
+$('end-other').addEventListener('click', switchOther);
 $('hint-btn').addEventListener('click', showHint);
 $('home').addEventListener('click', goHome);
 
