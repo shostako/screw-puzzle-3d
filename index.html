@@ -42,6 +42,7 @@
     <p id="end-text"></p>
     <div id="end-stars" role="img" hidden></div>
     <p id="end-score" hidden></p>
+    <div id="end-chapter" hidden></div>
     <button id="next" type="button" hidden>次のステージへ</button>
     <button id="rewind" type="button" hidden>解ける所まで戻る</button>
     <button id="back1" class="sub" type="button" hidden>1手戻す</button>
@@ -62,6 +63,15 @@
     </div>
     <button id="m-settings" class="sub" type="button">⚙ 設定</button>
     <button id="m-close" class="sub" type="button">閉じる</button>
+  </div>
+</div>
+<div id="stages" hidden>
+  <div class="card">
+    <h2>ステージ</h2>
+    <p id="st-total"></p>
+    <button id="st-continue" class="pick" type="button"><b>続きから</b><small id="st-continue-sub"></small></button>
+    <div id="st-list"></div>
+    <button id="st-close" class="sub" type="button">もどる</button>
   </div>
 </div>
 <div id="settings" hidden>

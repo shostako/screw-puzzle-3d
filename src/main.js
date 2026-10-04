@@ -12,8 +12,9 @@ import { fixedBlocker, sweepHits, outlineOf } from './board.js';
 import { initPhysics, createPhysics, syncPlates, settle, STEP } from './physics.js';
 import { generateLevel, ALL_KINDS } from './generator.js';
 import { BOX_LEVEL } from './levels/box.js';
-import { stageLevel, START_VIEW as START_EULER } from './stages.js';
+import { stageLevel, chapterOf, START_VIEW as START_EULER } from './stages.js';
 import { createProgress, deviceStorage } from './progress.js';
+import { chapterView, chapterList, totalStars, finishesChapter, newKinds, KIND_NAMES } from './chapters.js';
 import { createResume, restoreRecord, levelSignature, encodeSnapshot, decodeSnapshot, physicsAgrees } from './resume.js';
 import { createSettings, clearRecords, SPEEDS, QUALITIES } from './settings.js';
 import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, MAX_RANDOM, isRandomNo, dateKey, isDateKey, dateLabel, dailyBestKey } from './random.js';
@@ -203,6 +204,7 @@ const axis = new THREE.Vector3();
 const turn = new THREE.Quaternion();
 function rotateBy(dx, dy) {
   homing = null;
+  revealing = null;
   const { axis: a, angle } = dragRotation(dx, dy, radPerPx(window.innerWidth, window.innerHeight) * SPEEDS[settings.get('speed')].k);
   if (angle === 0) return;
   // カメラから見た軸で回す（いまの向きに関係なく、指の方向へ回る）
@@ -508,7 +510,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     playClock.pause();
     saveResume();   // Android は裏に回したアプリを落とすことがあるので、裏へ回る時に保存する
-  } else if (game.status === 'playing' && !loading && $('menu').hidden) playClock.resume();
+  } else if (game.status === 'playing' && !loading && !screenOpen()) playClock.resume();
 });
 
 let hud = hudOf(game.state);   // いま画面に出している箱とスロット（演出の途中の様子）
@@ -694,6 +696,7 @@ function showEnd(status) {
   seatMascot(true);
   cue(endCue(status));
   // クリアしたらその場で次のステージを保存する（ボタンを押す前に閉じても、次は続きから）
+  const before = progress.stage;
   if (cleared && mode.type === 'stage') progress.cleared(stage);
   $('end-title').textContent = !cleared ? '詰み'
     : mode.type === 'stage' ? `ステージ ${stage} クリア！`
@@ -701,10 +704,14 @@ function showEnd(status) {
     : 'クリア！';
   $('end-text').textContent = cleared ? 'すべての箱を埋めた' : '外せるねじが無くなった';
   showRating(cleared);
+  // 章の 10 番目を初めてクリアしたら、章の星の合計と次の章の予告（E9）。「次へ」で次の章の頭をお披露目して開く
+  const chapterDone = cleared && mode.type === 'stage' && !freePlay && finishesChapter(stage, before);
+  showChapterEnd(chapterDone);
   const next = cleared && !freePlay;
   $('next').hidden = !next;
   // ステージは次のステージへ、おまかせは同じ難しさの次の1問へ、今日の1問はステージの続きへ
-  $('next').textContent = mode.type === 'random' ? '次のおまかせ' : mode.type === 'daily' ? 'ステージの続きへ' : '次のステージへ';
+  $('next').textContent = mode.type === 'random' ? '次のおまかせ' : mode.type === 'daily' ? 'ステージの続きへ'
+    : chapterDone ? `第${chapterOf(stage + 1).no}章へ` : '次のステージへ';
   // 詰みからは、解ける所まで一気に戻すか、1手戻す
   showRewindButtons(!cleared);
   $('resume').hidden = true;
@@ -753,13 +760,89 @@ function showRating(cleared) {
   }));
 }
 
+// 章の終わり（E9）: 章の星の合計と、次の章の名前と新しい題材。ネジまるはもう1回跳んで大喜び、カードの周りに星を散らす
+let introChapter = null;   // 「次へ」で開く章の頭をお披露目するか（章の番号）
+function showChapterEnd(on) {
+  const el = $('end-chapter');
+  el.hidden = !on;
+  introChapter = null;
+  if (!on) return;
+  const done = chapterView(chapterOf(stage).no, progress.stage, bests);
+  const coming = chapterView(done.no + 1, progress.stage, bests);
+  const fresh = newKinds(coming.no).map((k) => KIND_NAMES[k]);
+  introChapter = coming.no;
+  const row = (cls, text) => {
+    const e = document.createElement('span');
+    e.className = cls;
+    e.textContent = text;
+    return e;
+  };
+  el.classList.toggle('perfect', done.perfect);
+  el.replaceChildren(
+    row('ce-head', `第${done.no}章「${done.title}」 クリア！`),
+    row('ce-stars', `章の星 ★ ${done.stars} / ${done.max}`),
+    row('ce-next', `次は 第${coming.no}章「${coming.title}」`),
+    row('ce-kinds', fresh.length ? `新しい題材: ${fresh.join('・')}` : `${coming.kinds.map((k) => KIND_NAMES[k]).join('・')} の総まとめ`),
+  );
+  if (done.perfect) el.querySelector('.ce-stars').insertAdjacentHTML('afterbegin', CROWN_SVG);
+  const g = generation;
+  wait(ACTIONS_WIN_MS).then(() => {
+    if (g === generation && !$('overlay').hidden) mascot.react('cleared');
+  });
+  confetti($('overlay').querySelector('.card'));
+}
+// 成功の跳び（mascot-motion.js の win、3.3 秒）が終わる頃にもう1回跳ばせる
+const ACTIONS_WIN_MS = 3300;
+// カードの周りから星を散らす（満杯の箱の sparkle を大きく、色を回して）
+function confetti(card) {
+  const r = card.getBoundingClientRect();
+  const colors = Object.values(THEME.screwColors);
+  for (let i = 0; i < 18; i++) {
+    const s = document.createElement('div');
+    s.className = 'spark confetti';
+    const a = (i / 18) * Math.PI * 2;
+    s.style.left = `${r.left + r.width / 2 + Math.cos(a) * r.width * 0.42}px`;
+    s.style.top = `${r.top + r.height * 0.45 + Math.sin(a) * r.height * 0.42}px`;
+    s.style.setProperty('--dx', `${Math.cos(a) * 70}px`);
+    s.style.setProperty('--dy', `${Math.sin(a) * 70 - 20}px`);
+    s.style.setProperty('--c', colors[i % colors.length]);
+    s.style.animationDelay = `${(i % 6) * 0.12}s`;
+    $('overlay').append(s);   // 暗い幕（#overlay）より手前に出す
+    s.addEventListener('animationend', () => s.remove());
+  }
+}
+
+// 章の頭を開いたとき: 立体を1回転させながら出し、章の名前の帯を出す（新しい題材のお披露目）
+let revealing = null;
+function revealChapter(no) {
+  const ch = chapterView(no, progress.stage, bests);
+  const banner = document.createElement('div');
+  banner.className = 'ch-banner';
+  const small = document.createElement('small');
+  small.textContent = `第${no}章`;
+  const big = document.createElement('b');
+  big.textContent = ch.title;
+  banner.append(small, big);
+  $('flyers').append(banner);
+  banner.addEventListener('animationend', () => banner.remove());
+  const to = model.quaternion.clone(), spin = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+  const t = tween(1400, (k) => {
+    if (revealing !== t) return;
+    const e = 1 - (1 - k) ** 3;
+    model.quaternion.copy(to).premultiply(spin.setFromAxisAngle(up, -2 * Math.PI * (1 - e)));
+  });
+  revealing = t;
+}
+
 // 題名（押すと遊び方を選ぶ画面）と、その下の小さな行
 function modeTitle(m = mode) {
   if (fixedBox) return ['固定の箱', ''];
   if (freePlay) return [`シード ${freeSeed}`, ''];
   if (m.type === 'daily') return ['今日の1問', dateLabel(m.key)];
   if (m.type === 'random') return [`おまかせ・${DIFFICULTIES[m.difficulty].label}`, `#${m.no}`];
-  return [`ステージ ${stage}`, ''];
+  // 章（E8）と、章の中の何番目か
+  const ch = chapterOf(stage);
+  return [`ステージ ${stage}`, `第${ch.no}章「${ch.title}」 ${ch.pos}/${ch.last - ch.first + 1}`];
 }
 function showStage() {
   const [title, sub] = modeTitle();
@@ -775,11 +858,14 @@ async function loadMode(next) {
   if (loading) return;
   loading = true;
   mode = next;
+  const intro = mode.type === 'stage' ? introChapter : null;
+  introChapter = null;
   $('overlay').hidden = true;
   $('menu').hidden = true;
+  $('stages').hidden = true;
   showStage();
   playClock.pause();
-  hint.textContent = `${modeTitle().join(' ').trim()} を組み立て中…`;
+  hint.textContent = `${mode.type === 'stage' ? modeTitle()[0] : modeTitle().join(' ').trim()} を組み立て中…`;
   await wait(30);
   LEVEL = levelFor();
   levelSig = null;
@@ -790,6 +876,7 @@ async function loadMode(next) {
   restart();
   hint.textContent = '1本指で回す・ねじをタップで外す';
   loading = false;
+  if (intro && chapterOf(stage).first === stage) revealChapter(intro);
   showUndo();
   saveResume();
 }
@@ -806,7 +893,7 @@ function nextStage() {
 
 function openMenu() {
   if (freePlay || loading) return;
-  $('m-stage-sub').textContent = `ステージ ${progress.stage} から`;
+  $('m-stage-sub').textContent = `ステージ ${progress.stage} まで・★ ${totalStars(progress.stage, bests)}`;
   const key = today();
   const best = bests.get(dailyBestKey(key));
   $('m-daily-sub').textContent = best
@@ -825,6 +912,83 @@ function pickMode(next) {
   if (same) return closeMenu();
   if (next.type === 'stage') stage = progress.stage;
   return loadMode(next);
+}
+// 遊び方・ステージ一覧・設定のどれかが開いているか（開いている間は遊んだ時間を数えない）
+const screenOpen = () => !$('menu').hidden || !$('stages').hidden || !$('settings').hidden;
+
+// ---- ステージ一覧（E9）: 遊び方の画面の「ステージ」から。章ごとにステージの番号と自己ベストの星を並べる ----
+// クリア済みのステージは選んで遊び直せる（到達は戻らない。progress.cleared は先へしか進めない）。まだのステージは鍵
+
+const LOCK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5"/></svg>';
+const CROWN_SVG = '<svg class="crown" viewBox="0 0 24 24" aria-label="全部 ★3"><path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 11H5z"/></svg>';
+function openStages() {
+  if (freePlay || loading) return;
+  const reached = progress.stage;
+  $('st-total').textContent = `星の合計 ★ ${totalStars(reached, bests)}`;
+  $('st-continue-sub').textContent = `ステージ ${reached}`;
+  const playingNow = mode.type === 'stage' ? stage : null;
+  const list = $('st-list');
+  list.replaceChildren(...chapterList(reached, bests).map((ch) => {
+    const sec = document.createElement('section');
+    sec.className = `chap${ch.open ? '' : ' locked'}${ch.done ? ' done' : ''}${ch.perfect ? ' perfect' : ''}`;
+    sec.dataset.chapter = ch.no;
+    const head = document.createElement('header');
+    const no = document.createElement('small');
+    no.textContent = `第${ch.no}章`;
+    const name = document.createElement('b');
+    name.textContent = ch.open ? ch.title : '？？？';
+    const sum = document.createElement('span');
+    sum.className = 'ch-sum';
+    sum.textContent = ch.open ? `★ ${ch.stars}/${ch.max}` : '';
+    if (!ch.open) sum.innerHTML = LOCK_SVG;
+    // 全部 ★3 の章には王冠
+    else if (ch.perfect) sum.insertAdjacentHTML('afterbegin', CROWN_SVG);
+    head.append(no, name, sum);
+    const grid = document.createElement('div');
+    grid.className = 'ch-grid';
+    grid.append(...ch.stages.map((s) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = `st ${s.state}${s.n === playingNow ? ' playing' : ''}`;
+      b.dataset.n = s.n;
+      if (s.state === 'locked') {
+        b.disabled = true;
+        b.setAttribute('aria-label', `ステージ ${s.n}（まだ）`);
+        b.innerHTML = LOCK_SVG;
+        return b;
+      }
+      const n = document.createElement('span');
+      n.className = 'n';
+      n.textContent = s.n;
+      const st = document.createElement('span');
+      st.className = 'ss';
+      st.textContent = s.state === 'next' ? 'つぎ' : '★'.repeat(s.stars) + '☆'.repeat(MAX_STARS - s.stars);
+      b.setAttribute('aria-label', s.state === 'next' ? `ステージ ${s.n}（次に遊ぶ）` : `ステージ ${s.n}（星 ${s.stars}）`);
+      b.append(n, st);
+      return b;
+    }));
+    sec.append(head, grid);
+    return sec;
+  }));
+  $('menu').hidden = true;
+  $('stages').hidden = false;
+  // 今遊んでいる（無ければ到達した）ステージの章を見せる
+  const focus = list.querySelector('.st.playing') ?? list.querySelector('.st.next');
+  focus?.closest('.chap')?.scrollIntoView({ block: 'start' });
+}
+function closeStages() {
+  $('stages').hidden = true;
+  openMenu();
+}
+// ステージ n を遊ぶ。今遊んでいる途中のステージなら、そのまま続ける
+function playStage(n) {
+  if (mode.type === 'stage' && stage === n && game.status === 'playing') {
+    $('stages').hidden = true;
+    if (!document.hidden) playClock.resume();
+    return;
+  }
+  stage = n;
+  return loadMode({ type: 'stage' });
 }
 
 // 演出を捨てて盤面を作り直す
@@ -1129,9 +1293,11 @@ const feedback = createFeedback(settings);
 function plateSize(id) {
   const p = LEVEL.plates.find((q) => q.id === id);
   if (!p) return undefined;
-  // 円柱（車輪）と三角の屋根は size を持たないので、輪郭の外接する長方形で測る
-  const ol = outlineOf(p), xs = ol.map((q) => q[0]), ys = ol.map((q) => q[1]);
-  return Math.sqrt((Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys)));
+  // 円柱（D4 の車輪など）は size を持たないので、円の面積から。家の屋根（三角）のように outline で形を決めた板は、多角形の面積から
+  if (p.shape === 'cylinder') return Math.sqrt(Math.PI) * p.radius;
+  const ol = outlineOf(p);
+  const area = Math.abs(ol.reduce((a, [x, y], i) => a + x * ol[(i + 1) % ol.length][1] - ol[(i + 1) % ol.length][0] * y, 0)) / 2;
+  return Math.sqrt(area);
 }
 
 // マスコット「ネジまる」（D3）。左下の小さなキャンバスに別の描き手で描き、演出の時計で動く。
@@ -1242,7 +1408,13 @@ $('next').addEventListener('click', nextStage);
 $('mode-btn').addEventListener('click', openMenu);
 $('m-close').addEventListener('click', closeMenu);
 $('m-settings').addEventListener('click', openSettings);
-$('m-stage').addEventListener('click', () => pickMode({ type: 'stage' }));
+$('m-stage').addEventListener('click', openStages);
+$('st-continue').addEventListener('click', () => playStage(progress.stage));
+$('st-close').addEventListener('click', closeStages);
+$('st-list').addEventListener('click', (e) => {
+  const b = e.target.closest('button.st');
+  if (b && !b.disabled) playStage(Number(b.dataset.n));
+});
 $('m-daily').addEventListener('click', () => pickMode({ type: 'daily', key: today() }));
 for (const d of DIFFICULTY_IDS) $(`m-${d}`).addEventListener('click', () => pickMode({ type: 'random', no: freshRandomNo(), difficulty: d }));
 $('undo').addEventListener('click', undoOne);
@@ -1335,6 +1507,8 @@ window.__app = {
   get mode() { return { ...mode }; },
   openMenu,
   openSettings,
+  openStages,
+  get reached() { return progress.stage; },
   settings: { get: (k) => settings.get(k), all: () => settings.all() },
   get pixelRatio() { return renderer.getPixelRatio(); },
   get mascotDrawing() { return mascot.enabled; },
