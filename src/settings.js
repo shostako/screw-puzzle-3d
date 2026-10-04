@@ -1,4 +1,4 @@
-// 設定（後回しの項目「設定」）。音・BGM・振動・回す速さ・画質・ネジまるの表示・ねじ穴の形（E2）を端末に保存する。
+// 設定（後回しの項目「設定」）。音・BGM とその曲（F）・振動・回す速さ・画質・ネジまるの表示・ねじ穴の形（E2）を端末に保存する。
 // 保存先は progress.js と同じく localStorage の形を外から渡す（テストでは Map で代用）。DOM にも描画にも依存しない。
 // 記録を消す（clearRecords）は、到達したステージと自己ベストと途中の局面と見せた導入（E4）を消し、設定は残す。
 
@@ -6,6 +6,7 @@ import { STORAGE_KEY as STAGE_KEY } from './progress.js';
 import { BEST_KEY } from './rating.js';
 import { RESUME_KEY } from './resume.js';
 import { TUTORIAL_KEY } from './tutorial.js';
+import { BGM_TRACKS, DEFAULT_TRACK } from './feedback.js';
 
 export const SETTINGS_KEY = 'screw-puzzle-3d.settings';
 // M8 からの音と振動の入り切り（'on' / 'off'）。新しい保存が無いときだけ読む
@@ -24,13 +25,15 @@ export const QUALITIES = {
   light: { label: '軽い', pixelRatios: [1], knurl: false, contact: false, mascotRatio: 1, idleFps: 15, blur: false, motionBg: false },
 };
 
+// bgmTrack: BGM の曲（feedback.js の BGM_TRACKS の id。初期値は E6 のオルゴール）
 // drives: ねじ穴の形を色ごとに変えるか（E2 の色の見分け。既定は全部六角穴のキャップボルト）
-export const DEFAULTS = Object.freeze({ sound: true, bgm: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true, drives: false });
+export const DEFAULTS = Object.freeze({ sound: true, bgm: true, bgmTrack: DEFAULT_TRACK, vibrate: true, speed: 'normal', quality: 'auto', mascot: true, drives: false });
 
 // 値として受け付けるもの（壊れた値・知らない値は既定に戻す）
 const VALID = {
   sound: (v) => typeof v === 'boolean',
   bgm: (v) => typeof v === 'boolean',
+  bgmTrack: (v) => BGM_TRACKS.some((t) => t.id === v),
   vibrate: (v) => typeof v === 'boolean',
   speed: (v) => Object.hasOwn(SPEEDS, v),
   quality: (v) => Object.hasOwn(QUALITIES, v),

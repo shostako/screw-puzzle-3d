@@ -391,6 +391,8 @@ button {
 #undo:disabled { opacity: 0.4; }
 #hint-btn svg { stroke: var(--accent); }
 #hint-btn:disabled { opacity: 0.6; }
+#other-btn .pip { fill: var(--ink); stroke: none; }
+#other-btn[hidden] { display: none; }
 #sound .mute { display: none; }
 #sound.off .wave { display: none; }
 #sound.off .mute { display: inline; }
@@ -476,7 +478,7 @@ button {
 }
 .card h2 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: 0.08em; }
 .card p { margin: 8px 0 18px; color: var(--ink-soft); font-size: 14px; }
-#again, #next, #rewind, #back1, #resume, #end-hint {
+#again, #next, #rewind, #back1, #resume, #end-hint, #end-other, #o-yes, #o-no {
   display: block;
   margin: 0 auto;
   min-width: 180px;
@@ -490,7 +492,7 @@ button {
   box-shadow: 0 4px 0 #b07c00;
 }
 #overlay.cleared h2 { color: #d08a00; }
-#next[hidden], #rewind[hidden], #back1[hidden], #resume[hidden], #end-hint[hidden] { display: none; }
+#next[hidden], #rewind[hidden], #back1[hidden], #resume[hidden], #end-hint[hidden], #end-other[hidden] { display: none; }
 #rewind:disabled, #end-hint:disabled { opacity: 0.6; }
 /* 詰み・行き止まり（E5）: 赤い文言をやめ、「戻る」と「ヒント」を大きな2つのボタンで並べる */
 #overlay.stuck h2, #overlay.deadend h2 { color: var(--ink); }
@@ -521,7 +523,7 @@ button {
 #end-help .big small { font-size: 12px; font-weight: 600; opacity: 0.8; }
 #end-hint { background: #fff4cc; color: #6b4a00; box-shadow: 0 4px 0 #e2b84a; border: 2px solid #f0c75a; }
 /* 次へがあるときの「もう一度」は控えめに */
-#again.sub, #back1.sub, #resume.sub {
+#again.sub, #back1.sub, #resume.sub, #end-other.sub {
   margin-top: 10px;
   min-height: 40px;
   background: transparent;
@@ -582,6 +584,30 @@ button {
   font-variant-numeric: tabular-nums;
 }
 #end-score .new-best { color: #d08a00; font-weight: 800; }
+
+/* 別の問題にするかの確かめ（F）: 遊び方の画面と同じ幕 */
+#other {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(29, 36, 48, 0.35);
+  z-index: 5;
+  animation: fade 0.2s ease-out;
+}
+#other[hidden] { display: none; }
+#other .card { width: min(300px, calc(100vw - 48px)); box-sizing: border-box; }
+#other h2 { font-size: 22px; margin-bottom: 10px; }
+#other p { margin: 0 0 16px; font-size: 14px; line-height: 1.6; color: var(--ink-soft); }
+#o-no.sub {
+  margin-top: 10px;
+  min-height: 40px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-soft);
+  font-size: 15px;
+  font-weight: 400;
+}
 
 /* 遊び方を選ぶ画面（D6）: ステージ・今日の1問・おまかせ 3 段 */
 #menu {
@@ -703,6 +729,10 @@ button {
   color: #3a2a00;
   box-shadow: 0 2px 0 #b07c00;
 }
+/* BGM の曲（F）: 名前が長いので、行を分けて 3 つずつ並べる */
+.s-wide { flex-direction: column; align-items: stretch; gap: 6px; }
+.seg-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
+.seg-grid button { min-width: 0; padding: 0 4px; font-size: 13px; }
 #settings .s-note { margin: -6px 0 10px; font-size: 11px; text-align: right; }
 #s-clear {
   display: block;

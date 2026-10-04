@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   stageConfig, stageLevel, hiddenAtStart, START_VIEW, chapterOf, stageStep, isFinale, CHAPTERS, CHAPTER_SIZE, MAX_LEVEL, SCREWS, curveConfig,
+  MAX_VARIANT, nextVariant,
 } from '../src/stages.js';
 import { ALL_KINDS } from '../src/generator.js';
 import { createProgress, STORAGE_KEY } from '../src/progress.js';
@@ -23,6 +24,54 @@ function memoryStorage() {
   const m = new Map();
   return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), map: m };
 }
+
+describe('ステージの別の問題（F）', () => {
+  // 導入・章の途中・章の大物・2 周目の章から
+  const PICKS = [1, 4, 12, 20, 33, 75];
+
+  it('別の盤面は元と違い、同じ設定（形・段・条件）で作られ、見つけた手順でクリアになる', () => {
+    for (const n of PICKS) {
+      for (const v of [1, 2]) {
+        const l = stageLevel(n, v);
+        expect(l.meta.stage).toBe(n);
+        expect(l.meta.variant).toBe(v);
+        expect(JSON.stringify(l.screws), `ステージ ${n} の別の盤面 ${v} が元と同じ`).not.toBe(JSON.stringify(level(n).screws));
+        expect(l.meta.kind).toBe(level(n).meta.kind);
+        expect(JSON.stringify(l.meta.opts)).toBe(JSON.stringify(level(n).meta.opts));
+        expect(() => validateBoard(l)).not.toThrow();
+        expect(stageConfig(n).want(l), `ステージ ${n} の別の盤面 ${v} が条件を満たさない`).toBe(true);
+        for (const isBlocked of [safeBlocker(l), blockerFor(l)]) {
+          let st = newGame(l);
+          for (const id of l.meta.solution) {
+            const r = removeScrew(st, id, isBlocked);
+            expect(r.ok, `ステージ ${n} の別の盤面 ${v} の ${id}: ${r.reason}`).toBe(true);
+            st = r.state;
+          }
+          expect(status(st, isBlocked)).toBe('cleared');
+        }
+      }
+    }
+  });
+
+  it('同じ番号なら同じ盤面。シードはそのステージの 1000 個の中で重ならない', () => {
+    expect(JSON.stringify(stageLevel(12, 3))).toBe(JSON.stringify(stageLevel(12, 3)));
+    expect(stageLevel(12, 0).meta.variant).toBeUndefined();
+    const seeds = [0, 1, MAX_VARIANT].map((v) => stageLevel(12, v).meta.seed);
+    for (const [v, seed] of [[0, seeds[0]], [1, seeds[1]], [MAX_VARIANT, seeds[2]]]) {
+      expect(seed).toBeGreaterThanOrEqual(12 * 1000 + v * 40);
+      expect(seed).toBeLessThan(12 * 1000 + (v + 1) * 40);
+    }
+    expect(() => stageLevel(12, MAX_VARIANT + 1)).toThrow();
+    expect(() => stageLevel(12, 1.5)).toThrow();
+  });
+
+  it('次の番号は 1〜MAX_VARIANT を回り、元の盤面（0）には戻らない', () => {
+    expect(nextVariant(undefined)).toBe(1);
+    expect(nextVariant(0)).toBe(1);
+    expect(nextVariant(1)).toBe(2);
+    expect(nextVariant(MAX_VARIANT)).toBe(1);
+  });
+});
 
 describe('ステージの盤面', () => {
   it('同じステージ番号なら同じ盤面', () => {

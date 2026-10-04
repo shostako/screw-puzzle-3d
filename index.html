@@ -66,6 +66,10 @@
   <p id="hint"></p>
 </header>
 <nav id="tools">
+  <!-- 別の問題（F）: 今と同じ難しさの別の盤面へ。サイコロの絵 -->
+  <button id="other-btn" type="button" aria-label="別の問題" title="別の問題">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="4"/><circle class="pip" cx="8.6" cy="8.6" r="1.3"/><circle class="pip" cx="12" cy="12" r="1.3"/><circle class="pip" cx="15.4" cy="15.4" r="1.3"/></svg>
+  </button>
   <button id="undo" type="button" aria-label="1手戻す" title="1手戻す" disabled>
     <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
   </button>
@@ -107,6 +111,7 @@
       </button>
     </div>
     <button id="back1" class="sub" type="button" hidden>1手戻す</button>
+    <button id="end-other" class="sub" type="button" hidden>別の問題にする</button>
     <button id="resume" class="sub" type="button" hidden>このまま続ける</button>
     <button id="again" type="button">もう一度</button>
   </div>
@@ -126,6 +131,15 @@
     <button id="m-close" class="sub" type="button">閉じる</button>
   </div>
 </div>
+<!-- 別の問題にするかの確かめ（F）。ねじを外した後だけ出す -->
+<div id="other" hidden>
+  <div class="card">
+    <h2>別の問題にする？</h2>
+    <p>同じ難しさの別の問題に替えます。<br>いまの問題の続きは消えます</p>
+    <button id="o-yes" type="button">別の問題にする</button>
+    <button id="o-no" class="sub" type="button">このまま続ける</button>
+  </div>
+</div>
 <div id="stages" hidden>
   <div class="card">
     <h2>ステージ</h2>
@@ -140,6 +154,7 @@
     <h2>設定</h2>
     <div class="s-row"><span>音</span><div class="seg" data-key="sound" role="group" aria-label="音"><button type="button" data-v="true">入</button><button type="button" data-v="false">切</button></div></div>
     <div class="s-row"><span>BGM</span><div class="seg" data-key="bgm" role="group" aria-label="BGM"><button type="button" data-v="true">入</button><button type="button" data-v="false">切</button></div></div>
+    <div class="s-row s-wide"><span>曲</span><div class="seg seg-grid" data-key="bgmTrack" role="group" aria-label="BGM の曲"></div></div>
     <div class="s-row"><span>振動</span><div class="seg" data-key="vibrate" role="group" aria-label="振動"><button type="button" data-v="true">入</button><button type="button" data-v="false">切</button></div></div>
     <div class="s-row"><span>回す速さ</span><div class="seg" data-key="speed" role="group" aria-label="回す速さ"><button type="button" data-v="slow">ゆっくり</button><button type="button" data-v="normal">ふつう</button><button type="button" data-v="fast">はやい</button></div></div>
     <div class="s-row"><span>画質</span><div class="seg" data-key="quality" role="group" aria-label="画質"><button type="button" data-v="auto">自動</button><button type="button" data-v="light">軽い</button></div></div>
