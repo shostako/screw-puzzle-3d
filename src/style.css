@@ -458,12 +458,15 @@ button {
 
 /* マスコット「ネジまる」（D3）。左下に立たせる。指の操作は下の盤面へ通す。
    終わりの画面（#overlay、z-index 3）より手前に出して、成功・失敗の動きが見えるようにする */
+/* F: 前の 108×140 の約 1.5 倍。背の低い画面では画面の高さの 1/4 まで縮める（下限は前の大きさ）。
+   吹き出し（#coach）の高さとしっぽの位置もこの高さから決める */
+:root { --mascot-h: clamp(140px, 25svh, 208px); }
 #mascot {
   position: fixed;
-  left: calc(var(--safe-area-inset-left, env(safe-area-inset-left, 0px)) + 4px);
-  bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 6px);
-  width: 108px;
-  height: 140px;
+  left: calc(var(--safe-area-inset-left, env(safe-area-inset-left, 0px)) + 2px);
+  bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 4px);
+  width: calc(var(--mascot-h) * 0.771);
+  height: var(--mascot-h);
   pointer-events: none;
   z-index: 4;
 }
@@ -944,7 +947,8 @@ button {
 #coach {
   position: fixed;
   left: calc(var(--safe-area-inset-left, env(safe-area-inset-left, 0px)) + 12px);
-  bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 140px);
+  /* ネジまるの頭の少し上（頭のてっぺんはキャンバスの上から 24% ほど） */
+  bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + var(--mascot-h) * 0.76 + 30px);
   width: max-content;
   /* 右下のボタン列（48px と余白）にかからない幅 */
   max-width: min(320px, calc(100vw - 12px - 76px - var(--safe-area-inset-right, env(safe-area-inset-right, 0px))));
@@ -962,7 +966,7 @@ button {
   text-wrap: pretty;
   pointer-events: none;
   z-index: 4;
-  transform-origin: 46px 100%;
+  transform-origin: calc(var(--mascot-h) * 0.386 - 10px) 100%;
   animation: coach-in 0.35s cubic-bezier(0.3, 1.5, 0.5, 1) backwards;
 }
 #coach[hidden] { display: none; }
@@ -970,7 +974,7 @@ button {
 #coach::after {
   content: "";
   position: absolute;
-  left: 40px;
+  left: calc(var(--mascot-h) * 0.386 - 18px);
   bottom: -9px;
   border: 8px solid transparent;
   border-top: 10px solid #fff;

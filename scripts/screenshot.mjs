@@ -1146,12 +1146,14 @@ async function mascotShots(context, errors, outside) {
   await save('mascot-stuck');
   await page.evaluate(() => window.__app.mascot.force(null));
 
-  // やり直すと待機に戻る
+  // やり直すと、手を振ってから待機に戻る（F）
   const again = await page.locator('#again').boundingBox();
   await tap(cdp, [again.x + again.width / 2, again.y + again.height / 2]);
   await waitRendered(page);
   const after = await page.evaluate(() => window.__app.mascot.action);
-  if (after !== 'idle') throw new Error(`やり直してもネジまるが待機に戻らない: ${after}`);
+  if (after !== 'idle' && after !== 'wave') throw new Error(`やり直してもネジまるが待機に戻らない: ${after}`);
+  await page.waitForFunction(() => window.__app.mascot.action === 'idle', null, { timeout: 5000 }).catch(() => { throw new Error('手を振った後に待機へ戻らない'); });
+  if (!(await history()).includes('wave')) throw new Error(`盤面が始まってもネジまるが手を振らない: ${await history()}`);
   await context.close();
 }
 

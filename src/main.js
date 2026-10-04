@@ -1237,6 +1237,7 @@ function restart() {
   playClock.reset();
   if (!document.hidden) playClock.resume();
   mascot.reset();
+  mascot.play('wave');   // 盤面が始まったら手を振る（F）
   seatMascot(false);
   syncPlates(physics, game.state);
   showState();
