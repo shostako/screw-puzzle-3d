@@ -627,6 +627,10 @@ button {
   color: #3a2a00;
   box-shadow: 0 2px 0 #b07c00;
 }
+/* BGM の曲（F）: 名前が長いので、行を分けて 3 つずつ並べる */
+.s-wide { flex-direction: column; align-items: stretch; gap: 6px; }
+.seg-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
+.seg-grid button { min-width: 0; padding: 0 4px; font-size: 13px; }
 #settings .s-note { margin: -6px 0 10px; font-size: 11px; text-align: right; }
 #s-clear {
   display: block;

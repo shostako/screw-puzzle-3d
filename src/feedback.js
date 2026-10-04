@@ -14,7 +14,7 @@
 //   stuck    詰み
 //   undo     戻した（1手戻す・解ける所まで戻る）
 
-// 音・BGM・振動の入り切りは設定（settings.js の sound / bgm / vibrate）が持つ。ここは毎回それを読んで鳴らすだけ。
+// 音・BGM・振動の入り切りと BGM の曲は設定（settings.js の sound / bgm / vibrate / bgmTrack）が持つ。ここは毎回それを読んで鳴らすだけ。
 // 「音」は全体のつまみで、切ると BGM も止まる。BGM は「音」が入りで「BGM」も入りの時だけ鳴る
 
 // タップの結果（game.tap の reason）の合図
@@ -198,38 +198,199 @@ export function peakOf(notes) {
   return peak;
 }
 
-// ---- BGM: おもちゃ箱のオルゴール ----
-// 8 小節のループ。1 小節は 8 分音符 8 つ。和音は C・Am・F・G を 2 回（2 回目は旋律を上げる）。
-// 旋律は鉄琴、低音は三角波で1拍目と3拍目、裏拍に小さなシャカ（雑音）。数字は MIDI の音番号、null は休み
-export const BGM = {
-  bpm: 100,
-  steps: 8,
-  roots: [48, 45, 41, 43, 48, 45, 41, 43],
-  chords: [[0, 4, 7], [0, 3, 7], [0, 4, 7], [0, 4, 7], [0, 4, 7], [0, 3, 7], [0, 4, 7], [0, 4, 7]],
-  melody: [
-    [72, null, 76, null, 79, 76, null, 74],
-    [72, null, 69, null, 72, null, 76, null],
-    [77, null, 76, null, 74, 72, null, 69],
-    [71, null, 74, null, 79, null, null, null],
-    [76, null, 79, null, 84, null, 79, 76],
-    [81, null, 79, null, 76, null, 72, null],
-    [77, 76, 74, null, 72, null, 69, null],
-    [71, null, 74, null, 72, null, null, null],
+// ---- BGM: 曲は6つ（F で増やした。設定の「曲」で選ぶ） ----
+// どの曲も 8 小節のループで、1 小節は steps 個の 8 分音符（3 拍子の曲は 6）。数字は MIDI の音番号、null は休み。
+//   roots   小節ごとの和音の根音（低音はこの 1 オクターブ下）
+//   chords  小節ごとの和音（根音からの半音の数）
+//   scale   旋律に使ってよい音（12 で割った余り）。テストで旋律がこの外へ出ないことを確かめる
+//   voice   旋律の楽器（VOICES の名前）、bass は低音を鳴らす拍と根音からの半音、comp は和音を刻む拍、perc は拍ごとの打楽器
+// 楽器の音（1 音ぶんの音の型を返す）
+const VOICES = {
+  // 鉄琴（オルゴール）: 基音と、4 倍の澄んだ部分音を短く
+  bell: (n, g) => bell(0, n, 0.5, g),
+  // 木琴: 短く切れて、4 倍の部分音を少し
+  marimba: (n, g) => [
+    { at: 0, f: MIDI(n), d: 0.28, wave: 'sine', gain: g, attack: 0.002 },
+    { at: 0, f: MIDI(n) * 3.98, d: 0.05, wave: 'sine', gain: g * 0.3, attack: 0.001 },
+  ],
+  // 笛: ゆっくり立ち上がる三角波と、1 オクターブ上を薄く
+  flute: (n, g) => [
+    { at: 0, f: MIDI(n), d: 0.95, wave: 'triangle', gain: g, attack: 0.07 },
+    { at: 0, f: MIDI(n) * 2, d: 0.7, wave: 'sine', gain: g * 0.15, attack: 0.09 },
+  ],
+  // ピコピコ（昔のゲーム機）: 矩形波は耳に大きく聞こえるので小さめにして、三角波で芯を足す
+  chip: (n, g) => [
+    { at: 0, f: MIDI(n), d: 0.17, wave: 'square', gain: g * 0.35, attack: 0.002 },
+    { at: 0, f: MIDI(n), d: 0.17, wave: 'triangle', gain: g * 0.6, attack: 0.002 },
+  ],
+  // 琴: はじいてすぐ減る。2 倍と 3 倍の部分音で弦らしく
+  koto: (n, g) => [
+    { at: 0, f: MIDI(n) * 1.006, to: MIDI(n), d: 0.7, wave: 'triangle', gain: g, attack: 0.002 },
+    { at: 0, f: MIDI(n) * 2, d: 0.18, wave: 'sine', gain: g * 0.3, attack: 0.002 },
+    { at: 0, f: MIDI(n) * 3, d: 0.08, wave: 'sine', gain: g * 0.15, attack: 0.001 },
+  ],
+  // ガラスの鈴: 長く響き、少し遅れて小さなこだま
+  glass: (n, g) => [
+    { at: 0, f: MIDI(n), d: 1.2, wave: 'sine', gain: g, attack: 0.004 },
+    { at: 0, f: MIDI(n) * 2.76, d: 0.3, wave: 'sine', gain: g * 0.12, attack: 0.002 },
+    { at: 0.36, f: MIDI(n), d: 0.9, wave: 'sine', gain: g * 0.32, attack: 0.004 },
   ],
 };
-export const bgmStepSec = () => 60 / BGM.bpm / 2;
-export const bgmLength = () => BGM.melody.length * BGM.steps;
+// 打楽器
+const PERC = {
+  shaker: { d: 0.04, noise: 'highpass', f: 6500, gain: 0.12 },
+  tick: { d: 0.02, noise: 'highpass', f: 8500, gain: 0.08 },
+  pat: { d: 0.05, noise: 'bandpass', f: 1200, q: 1.5, gain: 0.12 },
+  thump: { d: 0.09, noise: 'lowpass', f: 220, q: 0.8, gain: 0.32 },
+  clank: { d: 0.05, noise: 'bandpass', f: 3200, q: 6, gain: 0.2 },
+  taiko: { d: 0.16, noise: 'lowpass', f: 160, q: 1, gain: 0.26 },
+  wood: { d: 0.03, noise: 'bandpass', f: 1800, q: 4, gain: 0.14 },
+};
 
-// ループの step 番目（0 から。ループの長さで回る）に鳴らす音（at は 0）
-export function bgmNotes(step) {
-  const n = bgmLength();
+const MAJOR = [0, 4, 7], MINOR = [0, 3, 7];
+export const BGM_TRACKS = [
+  {
+    // E6 のおもちゃ箱のオルゴール（初期値）。C・Am・F・G を 2 回（2 回目は旋律を上げる）
+    id: 'orgel', label: 'オルゴール', bpm: 100, steps: 8, voice: 'bell', lead: 0.42,
+    scale: [0, 2, 4, 5, 7, 9, 11],
+    roots: [48, 45, 41, 43, 48, 45, 41, 43],
+    chords: [MAJOR, MINOR, MAJOR, MAJOR, MAJOR, MINOR, MAJOR, MAJOR],
+    melody: [
+      [72, null, 76, null, 79, 76, null, 74],
+      [72, null, 69, null, 72, null, 76, null],
+      [77, null, 76, null, 74, 72, null, 69],
+      [71, null, 74, null, 79, null, null, null],
+      [76, null, 79, null, 84, null, 79, 76],
+      [81, null, 79, null, 76, null, 72, null],
+      [77, 76, 74, null, 72, null, 69, null],
+      [71, null, 74, null, 72, null, null, null],
+    ],
+    bass: { at: { 0: 0, 4: 7 }, wave: 'triangle', d: 0.42, gain: 0.5 },
+    perc: { 2: 'shaker', 6: 'shaker' },
+  },
+  {
+    // おさんぽ: F 長調の木琴、跳ねる低音。明るく少し速い
+    id: 'walk', label: 'おさんぽ', bpm: 112, steps: 8, voice: 'marimba', lead: 0.45,
+    scale: [5, 7, 9, 10, 0, 2, 4],
+    roots: [53, 50, 58, 48, 53, 50, 55, 48],
+    chords: [MAJOR, MINOR, MAJOR, MAJOR, MAJOR, MINOR, MINOR, MAJOR],
+    melody: [
+      [72, null, 77, null, 81, 79, 77, null],
+      [74, null, 77, null, 81, null, 79, 77],
+      [82, null, 81, 79, 77, null, 74, null],
+      [76, null, 79, null, 72, null, null, null],
+      [77, null, 81, null, 84, null, 81, 77],
+      [86, null, 84, null, 81, null, 77, null],
+      [79, 82, 86, null, 84, 82, 81, 79],
+      [76, null, 79, null, 77, null, null, null],
+    ],
+    bass: { at: { 0: 0, 2: 7, 4: 12, 6: 7 }, wave: 'triangle', d: 0.24, gain: 0.42 },
+    perc: { 1: 'tick', 3: 'tick', 4: 'pat', 5: 'tick', 7: 'tick' },
+  },
+  {
+    // こもりうた: G 長調の 3 拍子。笛の旋律と、ズン・チャッ・チャッの柔らかい和音。ゆっくり
+    id: 'lullaby', label: 'こもりうた', bpm: 72, steps: 6, voice: 'flute', lead: 0.42,
+    scale: [7, 9, 11, 0, 2, 4, 6],
+    roots: [55, 52, 48, 50, 55, 52, 50, 55],
+    chords: [MAJOR, MINOR, MAJOR, MAJOR, MAJOR, MINOR, [0, 4, 7, 10], MAJOR],
+    melody: [
+      [74, null, null, null, 71, null],
+      [72, null, 71, null, 67, null],
+      [69, null, null, null, 72, null],
+      [71, null, 69, null, 66, null],
+      [74, null, null, 76, 79, null],
+      [76, null, 74, null, 71, null],
+      [72, null, 71, null, 69, null],
+      [67, null, null, null, null, null],
+    ],
+    bass: { at: { 0: 0 }, wave: 'sine', d: 1.1, gain: 0.5 },
+    comp: { at: [2, 4], wave: 'triangle', d: 0.45, gain: 0.1 },
+    perc: {},
+  },
+  {
+    // こうば: D ドリアのピコピコ。金型の工場のように、ドン・カン と刻む。速い
+    id: 'factory', label: 'こうば', bpm: 120, steps: 8, voice: 'chip', lead: 0.42,
+    scale: [2, 4, 5, 7, 9, 11, 0],
+    roots: [50, 55, 50, 55, 53, 48, 55, 55],
+    chords: [MINOR, MAJOR, MINOR, MAJOR, MAJOR, MAJOR, MAJOR, MAJOR],
+    melody: [
+      [74, null, 77, 74, null, 72, 74, null],
+      [null, 71, 74, null, 79, null, 77, 74],
+      [74, null, 77, 74, null, 81, 79, 77],
+      [79, null, null, 77, 74, null, 71, null],
+      [77, null, 81, null, 84, null, 81, 77],
+      [79, null, 76, null, 72, null, 76, 79],
+      [83, null, 81, 79, null, 77, 74, null],
+      [71, null, 74, null, 79, null, null, null],
+    ],
+    bass: { at: { 0: 0, 3: 12, 4: 0, 6: 12 }, wave: 'triangle', d: 0.16, gain: 0.45 },
+    perc: { 0: 'thump', 1: 'tick', 2: 'clank', 3: 'tick', 4: 'thump', 5: 'tick', 6: 'clank', 7: 'tick' },
+  },
+  {
+    // わらべうた: D の陽音階（レ・ミ・ソ・ラ・シ）の琴と太鼓。和音は 5 度だけ
+    id: 'warabe', label: 'わらべうた', bpm: 92, steps: 8, voice: 'koto', lead: 0.42,
+    scale: [2, 4, 7, 9, 11],
+    roots: [50, 50, 55, 57, 50, 50, 55, 50],
+    chords: Array(8).fill([0, 7]),
+    melody: [
+      [74, null, 76, null, 79, null, 76, null],
+      [74, null, 76, null, 74, null, 71, null],
+      [79, null, 81, null, 83, null, 81, 79],
+      [81, null, 76, null, 81, null, null, null],
+      [86, null, 83, null, 81, null, 83, null],
+      [79, null, 81, null, 76, null, 74, null],
+      [76, null, 79, null, 76, 74, 71, null],
+      [69, null, 74, null, null, null, null, null],
+    ],
+    bass: { at: { 0: 0, 4: 7 }, wave: 'triangle', d: 0.5, gain: 0.38 },
+    perc: { 0: 'taiko', 2: 'wood', 6: 'wood' },
+  },
+  {
+    // ほしぞら: E♭ 長調の 7 の和音。ガラスの鈴がこだまする、静かな曲
+    id: 'stars', label: 'ほしぞら', bpm: 84, steps: 8, voice: 'glass', lead: 0.4,
+    scale: [3, 5, 7, 8, 10, 0, 2],
+    roots: [51, 48, 56, 58, 51, 55, 56, 58],
+    chords: [[0, 4, 7, 11], [0, 3, 7, 10], [0, 4, 7, 11], MAJOR, [0, 4, 7, 11], [0, 3, 7, 10], [0, 4, 7, 11], MAJOR],
+    melody: [
+      [79, null, null, 82, null, null, 86, null],
+      [84, null, null, null, 79, null, null, null],
+      [80, null, null, 84, null, null, 87, null],
+      [86, null, null, null, 82, null, null, null],
+      [79, null, 82, null, 87, null, 86, null],
+      [86, null, null, 82, null, null, 79, null],
+      [80, null, 84, null, 87, null, 91, null],
+      [89, null, null, null, null, null, null, null],
+    ],
+    bass: { at: { 0: 0 }, wave: 'sine', d: 1.6, gain: 0.38 },
+    comp: { at: [2, 4, 6], arp: true, wave: 'sine', d: 0.6, gain: 0.14 },
+    perc: {},
+  },
+];
+export const DEFAULT_TRACK = 'orgel';
+export const trackOf = (id) => BGM_TRACKS.find((t) => t.id === id) ?? BGM_TRACKS[0];
+// E6 の名前（初期値の曲）
+export const BGM = trackOf(DEFAULT_TRACK);
+export const bgmStepSec = (id) => 60 / trackOf(id).bpm / 2;
+export const bgmLength = (id) => { const t = trackOf(id); return t.melody.length * t.steps; };
+
+// 曲 id のループの step 番目（0 から。ループの長さで回る）に鳴らす音（at は 0 から）
+export function bgmNotes(step, id = DEFAULT_TRACK) {
+  const t = trackOf(id);
+  const n = bgmLength(id);
   const i = ((step % n) + n) % n;
-  const bar = Math.floor(i / BGM.steps), s = i % BGM.steps;
+  const bar = Math.floor(i / t.steps), s = i % t.steps;
+  const root = t.roots[bar], chord = t.chords[bar];
   const notes = [];
-  const m = BGM.melody[bar][s];
-  if (m != null) notes.push(...bell(0, m, 0.5, 0.42));
-  if (s === 0 || s === 4) notes.push({ at: 0, f: MIDI(BGM.roots[bar] - 12 + (s === 4 ? 7 : 0)), d: 0.42, wave: 'triangle', gain: 0.5, attack: 0.01 });
-  if (s === 2 || s === 6) notes.push({ at: 0, d: 0.04, noise: 'highpass', f: 6500, gain: 0.12 });
+  const m = t.melody[bar][s];
+  if (m != null) notes.push(...VOICES[t.voice](m, t.lead));
+  const b = t.bass.at[s];
+  if (b != null) notes.push({ at: 0, f: MIDI(root - 12 + b), d: t.bass.d, wave: t.bass.wave, gain: t.bass.gain, attack: 0.01 });
+  const c = t.comp?.at.indexOf(s) ?? -1;
+  if (c >= 0) {
+    const tones = t.comp.arp ? [chord[(c + 1) % chord.length]] : chord;
+    for (const k of tones) notes.push({ at: 0, f: MIDI(root + k), d: t.comp.d, wave: t.comp.wave, gain: t.comp.gain, attack: 0.02 });
+  }
+  if (t.perc[s]) notes.push({ at: 0, ...PERC[t.perc[s]] });
   return notes;
 }
 
@@ -244,12 +405,13 @@ export function bgmShouldPlay({ sound, bgm, hidden }) {
 export function createFeedback(settings, { doc = globalThis.document } = {}) {
   const soundOn = () => settings?.get('sound') ?? true;
   const bgmOn = () => settings?.get('bgm') ?? true;
+  const trackOn = () => trackOf(settings?.get('bgmTrack')).id;
   const vibrateOn = () => settings?.get('vibrate') ?? true;
   const hidden = () => Boolean(doc?.hidden);
   let ctx = null;
   let out = null;       // 効果音と BGM をまとめる先（全体の大きさ → 割れ止め → スピーカー）
   let noise = null;
-  let bgm = null;       // 鳴っている BGM { bus, timer, step, next }
+  let bgm = null;       // 鳴っている BGM { track, bus, timer, step, next }
 
   function unlock() {
     if (!soundOn()) return;
@@ -328,13 +490,14 @@ export function createFeedback(settings, { doc = globalThis.document } = {}) {
     bus.gain.setValueAtTime(0.0001, ctx.currentTime);
     bus.gain.exponentialRampToValueAtTime(VOLUME.bgm, ctx.currentTime + 0.6);   // ふわっと入る
     bus.connect(out);
-    bgm = { bus, step: 0, next: ctx.currentTime + 0.1, timer: null };
+    const track = trackOn();
+    bgm = { track, bus, step: 0, next: ctx.currentTime + 0.1, timer: null };
     const tick = () => {
       if (!bgm || !ctx) return;
       while (bgm.next < ctx.currentTime + LOOKAHEAD) {
-        play(bgmNotes(bgm.step), bgm.bus, 1, bgm.next);
-        bgm.step = (bgm.step + 1) % bgmLength();
-        bgm.next += bgmStepSec();
+        play(bgmNotes(bgm.step, track), bgm.bus, 1, bgm.next);
+        bgm.step = (bgm.step + 1) % bgmLength(track);
+        bgm.next += bgmStepSec(track);
       }
     };
     tick();
@@ -366,8 +529,10 @@ export function createFeedback(settings, { doc = globalThis.document } = {}) {
     g.exponentialRampToValueAtTime(VOLUME.bgm, t + sec + 0.8);
   }
   function updateBgm() {
-    if (bgmShouldPlay({ sound: soundOn(), bgm: bgmOn(), hidden: hidden() })) startBgm();
-    else stopBgm();
+    if (bgmShouldPlay({ sound: soundOn(), bgm: bgmOn(), hidden: hidden() })) {
+      if (bgm && bgm.track !== trackOn()) stopBgm();   // 曲が変わったら、今の曲を消して頭から
+      startBgm();
+    } else stopBgm();
   }
 
   // 裏に回ったら止めて休ませ、表に戻ったら再開する
@@ -385,9 +550,9 @@ export function createFeedback(settings, { doc = globalThis.document } = {}) {
       }
     }
   });
-  // 音・BGM の入り切りが変わったら、すぐ BGM に効かせる
+  // 音・BGM の入り切りや曲が変わったら、すぐ BGM に効かせる
   settings?.onChange?.((name) => {
-    if (name === 'sound' || name === 'bgm') {
+    if (name === 'sound' || name === 'bgm' || name === 'bgmTrack') {
       if (soundOn()) unlock();
       else updateBgm();
     }
@@ -405,6 +570,7 @@ export function createFeedback(settings, { doc = globalThis.document } = {}) {
     get sound() { return soundOn(); },
     get vibrate() { return vibrateOn(); },
     get bgmPlaying() { return Boolean(bgm); },
+    get bgmTrack() { return bgm?.track ?? null; },
     unlock,
     // 合図を鳴らす（null なら何もしない）。音と振動はそれぞれの設定に従う。opts は音の形（plate なら { size }）
     cue(name, opts) {
