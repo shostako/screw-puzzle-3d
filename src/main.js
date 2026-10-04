@@ -1509,17 +1509,22 @@ function screwAt(x, y) {
   return (hit && screwIdOf(hit.object)) || nearestScrew(visibleScrews(), x, y);
 }
 
+// 離した所ではなく、指を置いたときに選んだ（沈めた）ねじを外す（F1）。沈んだねじは光線から外れたり、
+// 隣のねじの方が近くなったりして、離した所で選び直すと沈めたねじと違う答えになることがある
 function onTap(x, y) {
   if (!$('overlay').hidden) return;
-  const id = screwAt(x, y);
+  const id = aimedId && game.state.where[aimedId] === 'board' ? aimedId : screwAt(x, y);
   if (id) tapScrew(id);
 }
 
-// 指が触れた瞬間に、指の下のねじを沈める（押し込み、E5）。外せるかどうかに関わらず沈める（タップで外すかはまだ分からない）
+// 指が触れた瞬間に、指の下のねじを沈める（押し込み、E5）。外せるかどうかに関わらず沈める（タップで外すかはまだ分からない）。
+// 選んだねじの id を返す。この操作は、少し長く押しても少しぶれてもタップのまま（gesture.aim()、F1）
 function pressAt(x, y) {
-  if (!$('overlay').hidden || loading || game.status !== 'playing') return;
+  if (!$('overlay').hidden || loading || game.status !== 'playing') return null;
   const id = screwAt(x, y);
-  if (id && game.state.where[id] === 'board') pressScrew(board.screws.get(id));
+  if (!id || game.state.where[id] !== 'board') return null;
+  pressScrew(board.screws.get(id));
+  return id;
 }
 
 // ---- 指の操作 ----
@@ -1529,6 +1534,7 @@ const gesture = createGesture();
 const CATCH_SPEED = 0.3;   // ピクセル毎ミリ秒
 let caught = false;
 let pinched = false;
+let aimedId = null;   // 最初の指を置いたときに選んだねじ（F1）
 function handle(events, t) {
   for (const e of events) {
     if (e.type === 'rotate') {
@@ -1552,10 +1558,13 @@ canvas.addEventListener('pointerdown', (e) => {
   if (gesture.activePointers === 0) {
     caught = stopSpin() > CATCH_SPEED;
     pinched = false;
+    aimedId = null;
   }
   handle(gesture.down(e.pointerId, e.clientX, e.clientY, e.timeStamp), e.timeStamp);
-  if (gesture.activePointers === 1 && !caught) pressAt(e.clientX, e.clientY);
-  else if (pressedObj) releaseScrew();
+  if (gesture.activePointers === 1 && !caught) {
+    aimedId = pressAt(e.clientX, e.clientY);
+    if (aimedId) gesture.aim();
+  } else if (pressedObj) releaseScrew();
 });
 canvas.addEventListener('pointermove', (e) => {
   handle(gesture.move(e.pointerId, e.clientX, e.clientY, e.timeStamp), e.timeStamp);
@@ -2069,6 +2078,7 @@ window.__app = {
     requestRender();
   },
   visibleScrews,
+  screwAt,
   // マスコット: 今の動き、合図を送る、姿勢を決め打ちする（動きの名前と秒。null で戻す）
   mascot: {
     get action() { return mascot.action; },

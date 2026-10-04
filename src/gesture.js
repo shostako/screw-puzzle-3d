@@ -5,17 +5,22 @@
 export const TAP_MAX_MOVE = 10;
 // 置いてから離すまでがこれより長ければタップではない（長押しや迷った指）
 export const TAP_MAX_MS = 350;
+// ねじの上に置いた指（aim() で知らせる）は、押し込んだまま少し考えても、指の腹が少し転がってもタップのまま。
+// ボタンと同じく「押したねじの上で離せば押したことになる」（F1。0.35 秒を超えると、沈んだねじが外れずに戻っていた）
+export const AIM_MAX_MOVE = 18;
 
 // 1回の操作（最初の指が触れてから全部の指が離れるまで）を追う。
 // down/move/up/cancel はそれぞれ、起きた出来事の配列を返す:
 //   { type: 'rotate', dx, dy }  1本指のドラッグ。前回からの移動量
 //   { type: 'zoom', scale }     2本指の間隔の比（前回比。1 より大きければ広がった）
 //   { type: 'tap', x, y }       タップと判定された。離した位置
-export function createGesture({ tapMaxMove = TAP_MAX_MOVE, tapMaxMs = TAP_MAX_MS } = {}) {
+// aim() は最初の指がねじの上に置かれたときに呼ぶ。その操作では時間の上限を外し、ぶれの許しを aimMaxMove に広げる
+export function createGesture({ tapMaxMove = TAP_MAX_MOVE, tapMaxMs = TAP_MAX_MS, aimMaxMove = AIM_MAX_MOVE } = {}) {
   const pointers = new Map(); // id -> { x, y }
   let start = null; // 最初の指 { id, x, y, t }
   let tapPossible = false;
   let dragging = false;
+  let aimed = false;
   let pinchDist = 0;
 
   function distance() {
@@ -28,6 +33,7 @@ export function createGesture({ tapMaxMove = TAP_MAX_MOVE, tapMaxMs = TAP_MAX_MS
       start = { id, x, y, t };
       tapPossible = true;
       dragging = false;
+      aimed = false;
     } else {
       // 2本目の指が来たら、この操作はもうタップにならない
       tapPossible = false;
@@ -54,7 +60,7 @@ export function createGesture({ tapMaxMove = TAP_MAX_MOVE, tapMaxMs = TAP_MAX_MS
 
     if (!dragging) {
       const moved = Math.hypot(x - start.x, y - start.y);
-      if (id === start.id && moved <= tapMaxMove) return [];
+      if (id === start.id && moved <= (aimed ? aimMaxMove : tapMaxMove)) return [];
       dragging = true;
       tapPossible = false;
       // しきい値までの分も回す（指の下の立体が遅れてついてこないように）
@@ -73,7 +79,7 @@ export function createGesture({ tapMaxMove = TAP_MAX_MOVE, tapMaxMs = TAP_MAX_MS
       return [];
     }
     if (pointers.size > 0) return [];
-    const isTap = tapPossible && !dragging && id === start.id && t - start.t <= tapMaxMs;
+    const isTap = tapPossible && !dragging && id === start.id && (aimed || t - start.t <= tapMaxMs);
     start = null;
     return isTap ? [{ type: 'tap', x: x ?? 0, y: y ?? 0 }] : [];
   }
@@ -85,5 +91,10 @@ export function createGesture({ tapMaxMove = TAP_MAX_MOVE, tapMaxMs = TAP_MAX_MS
     return [];
   }
 
-  return { down, move, up, cancel, get activePointers() { return pointers.size; } };
+  // 最初の指がねじの上にある（1本指で、まだ動かしていないときだけ効く）
+  function aim() {
+    if (pointers.size === 1 && tapPossible && !dragging) aimed = true;
+  }
+
+  return { down, move, up, cancel, aim, get activePointers() { return pointers.size; } };
 }
