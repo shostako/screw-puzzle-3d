@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { createGesture } from './gesture.js';
 import { dragRotation, zoomDistance, radPerPx } from './view.js';
-import { buildBoard, setKnurl } from './scene.js';
-import { THEME, cssVariables } from './theme.js';
+import { buildBoard, setKnurl, setContact, setDrives, driveIcon } from './scene.js';
+import { THEME, cssVariables, skyVariables } from './theme.js';
 import { bakeEnvironment } from './env.js';
 import { createMascot } from './mascot.js';
 import { createGame, hudOf, applyEvent, rewindPoint } from './game.js';
@@ -92,6 +92,9 @@ const DPR = window.devicePixelRatio || 1;
 // 背景の空とマットは CSS で描き、キャンバスは透明にして重ねる（3D で描くものを増やさない）
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: DPR < 2, alpha: true, powerPreference: 'high-performance' });
 renderer.setClearColor(0x000000, 0);
+// 日の当たる淡い面が白く飛ばないよう、高い所だけを寝かせるトーンマップ（E2。theme.js の exposure）
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = THEME.exposure;
 
 // 描く解像度。DPR は 2 まで。動かしている間の1フレームが重ければ段階的に下げる（中級機で滑らかに動かすため）。
 // 下げた解像度はその回のあいだ保つ（上げ下げを繰り返すと画面がちらつく）。設定の画質「軽い」なら初めから 1
@@ -393,6 +396,7 @@ function dot(color) {
   const d = document.createElement('div');
   d.className = 'dot';
   d.style.setProperty('--c', cssColor(color));
+  d.style.setProperty('--drive', driveIcon(color));   // ねじ穴の形（設定「色ごと」のときだけ CSS が使う）
   return d;
 }
 
@@ -400,7 +404,10 @@ function renderHud(hud, spawned = -1) {
   boxesEl.replaceChildren(...hud.boxes.map((b, i) => {
     const el = document.createElement('div');
     el.className = 'box' + (b ? '' : ' empty') + (i === spawned ? ' spawn' : '');
-    if (b) el.style.setProperty('--c', cssColor(b.color));
+    if (b) {
+      el.style.setProperty('--c', cssColor(b.color));
+      el.style.setProperty('--drive', driveIcon(b.color));
+    }
     for (let k = 0; k < 3; k++) {
       const hole = document.createElement('div');
       hole.className = 'hole';
@@ -996,8 +1003,10 @@ function rebuildBoard() {
     model.remove(board.root);
     for (const p of board.plates.values()) if (p.parent === scene) scene.remove(p);
   }
-  board = buildBoard(LEVEL, { knurl: quality().knurl });
+  board = buildBoard(LEVEL, { knurl: quality().knurl, contact: quality().contact, drives: settings.get('drives') });
   model.add(board.root);
+  // 空とマットの色は盤面の種類で変える（E2。theme.js の skies）
+  for (const [name, value] of Object.entries(skyVariables(LEVEL.meta?.kind))) rootStyle.setProperty(name, value);
   stepClock = 0;
 }
 
@@ -1344,17 +1353,25 @@ function applySetting(name, value) {
   } else if (name === 'quality') {
     usePixelRatios();
     resize();
-    if (board) setKnurl(board, quality().knurl);
+    if (board) {
+      setKnurl(board, quality().knurl);
+      setContact(board, quality().contact);
+    }
     mascot.setQuality({ maxRatio: quality().mascotRatio, idleEvery: quality().idleEvery });
     requestRender();
   } else if (name === 'mascot') {
     mascot.enabled = value;
     document.body.classList.toggle('no-mascot', !value);
+  } else if (name === 'drives') {
+    document.body.classList.toggle('drives', value);
+    if (board) setDrives(board, value);
+    requestRender();
   }
   showSettings();
 }
 settings.onChange(applySetting);
 applySetting('mascot', settings.get('mascot'));
+applySetting('drives', settings.get('drives'));
 
 function openSettings() {
   disarmClear();
