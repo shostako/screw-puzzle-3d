@@ -189,7 +189,7 @@ export function mascotPose(action, t, clock = t, still = false) {
     const up = smooth(k / 0.2) * (1 - smooth((k - 0.8) / 0.2));
     p.face = up > 0.3 ? 'happy' : 'open';
     p.blink = p.blink && up <= 0.3;
-    p.armL = [p.armL[0] - up * (1.9 + Math.sin(k * Math.PI * 5) * 0.32), p.armL[1] + up * 0.7, 0];
+    p.armL = [p.armL[0] - up * (1.55 + Math.sin(k * Math.PI * 5) * 0.35), p.armL[1] + up * 1.0, 0];
     p.headSide = up * -0.07;
     p.headTurn *= 1 - up;
     p.headTilt *= 1 - up;
