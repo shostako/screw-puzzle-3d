@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createGesture, TAP_MAX_MOVE, TAP_MAX_MS } from '../src/gesture.js';
+import { createGesture, TAP_MAX_MOVE, TAP_MAX_MS, AIM_MAX_MOVE } from '../src/gesture.js';
 
 const types = (events) => events.map((e) => e.type);
 
@@ -118,5 +118,58 @@ describe('2本指', () => {
     g.up(2, 200, 100, 50);
     expect(g.move(1, 103, 100, 60)).toEqual([{ type: 'rotate', dx: 3, dy: 0 }]);
     expect(g.up(1, 103, 100, 70)).toEqual([]);
+  });
+});
+
+describe('ねじの上に置いた指（F1）', () => {
+  it('ねじの上で長く押してから離してもタップ（沈んだねじが外れずに戻らない）', () => {
+    const g = createGesture();
+    g.down(1, 100, 100, 0);
+    g.aim();
+    expect(types(g.up(1, 100, 100, 1500))).toEqual(['tap']);
+  });
+
+  it('ねじの上では指の腹のぶれを広めに許し、回さない', () => {
+    const g = createGesture();
+    g.down(1, 100, 100, 0);
+    g.aim();
+    expect(AIM_MAX_MOVE).toBeGreaterThan(TAP_MAX_MOVE);
+    expect(g.move(1, 100 + AIM_MAX_MOVE, 100, 200)).toEqual([]);
+    expect(types(g.up(1, 100 + AIM_MAX_MOVE, 100, 600))).toEqual(['tap']);
+  });
+
+  it('ねじの上からでも、はっきり動かせば回す。離してもタップにならない', () => {
+    const g = createGesture();
+    g.down(1, 100, 100, 0);
+    g.aim();
+    expect(g.move(1, 100 + AIM_MAX_MOVE + 1, 100, 50)).toEqual([{ type: 'rotate', dx: AIM_MAX_MOVE + 1, dy: 0 }]);
+    expect(g.up(1, 100, 100, 100)).toEqual([]);
+  });
+
+  it('2本目の指が来たらタップにならない', () => {
+    const g = createGesture();
+    g.down(1, 100, 100, 0);
+    g.aim();
+    g.down(2, 200, 100, 20);
+    g.up(2, 200, 100, 40);
+    expect(g.up(1, 100, 100, 60)).toEqual([]);
+  });
+
+  it('次の操作には持ち越さない（何も無い所の長押しはタップにならない）', () => {
+    const g = createGesture();
+    g.down(1, 100, 100, 0);
+    g.aim();
+    g.up(1, 100, 100, 100);
+    g.down(1, 100, 100, 1000);
+    expect(g.up(1, 100, 100, 1000 + TAP_MAX_MS + 1)).toEqual([]);
+  });
+
+  it('動かし始めた後の aim() は効かない', () => {
+    const g = createGesture();
+    g.down(1, 100, 100, 0);
+    g.move(1, 130, 100, 30);
+    g.aim();
+    g.move(1, 100, 100, 60);
+    expect(g.up(1, 100, 100, 90)).toEqual([]);
   });
 });

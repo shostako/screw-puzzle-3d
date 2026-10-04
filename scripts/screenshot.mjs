@@ -123,7 +123,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光、boot は起動とタイトル（E3）、feel は手触りと演出（E5）、tutorial は初めての導入（E4）、other は別の問題（F）
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光、boot は起動とタイトル（E3）、feel は手触りと演出（E5）、tutorial は初めての導入（E4）、other は別の問題（F）、tap はねじの上の長押しとぶれ（F）
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -1743,6 +1743,52 @@ async function undoShots(context, errors, outside) {
 
 // 手触りと演出（E5）: 押し込み・塞いでいる板の光・箱の連鎖・クリアのねじの雨・★ごとのクリアのカード・詰みのカード。
 // FEEL_BEFORE=1 は変更前（E5 の前の dist）を同じ場面で撮るとき用で、E5 で足した物の確かめを飛ばす
+// ねじの上に置いた指（F）: 沈んだねじは、長く押しても、指の腹が少しぶれても、離せば外れる。
+// はっきり動かしたら回す操作になり、外れない。撮る画は無く、確かめるだけ
+async function tapShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await page.goto(url + '?stage=8');
+  await waitRendered(page);
+  // 周りのねじから 40px 以上離れた、外せる見えているねじ
+  const target = () => page.evaluate(() => {
+    const seen = window.__app.visibleScrews();
+    const legal = new Set(window.__app.legal());
+    return seen.find((s) => legal.has(s.id) && seen.every((o) => o.id === s.id || Math.hypot(o.x - s.x, o.y - s.y) >= 40)) ?? null;
+  });
+  const where = (id) => page.evaluate((id) => window.__app.game.state.where[id], id);
+  const cases = [
+    { name: '0.9 秒の長押し', path: [[0, 0]], hold: 900, removed: true },
+    { name: '14px のぶれ', path: [[0, 0], [7, 3], [14, 4]], hold: 250, removed: true },
+    { name: '60px なぞる', path: [[0, 0], [20, 0], [40, 0], [60, 0]], hold: 150, removed: false },
+  ];
+  for (const c of cases) {
+    const t = await target();
+    if (!t) throw new Error(`tap: 周りの空いた外せるねじが無い`);
+    const q = () => page.evaluate(() => window.__app.model.quaternion.toArray().join());
+    const q0 = await q();
+    await touch(cdp, 'touchStart', [[t.x, t.y]]);
+    for (const [dx, dy] of c.path.slice(1)) await touch(cdp, 'touchMove', [[t.x + dx, t.y + dy]]);
+    await sleep(c.hold);
+    if (c.removed && !(await page.evaluate(() => window.__app.pressed))) throw new Error(`tap: ${c.name}の間にねじが沈んでいない`);
+    await touch(cdp, 'touchEnd', []);
+    await waitRendered(page);
+    const gone = (await where(t.id)) !== 'board';
+    if (gone !== c.removed) throw new Error(`tap: ${c.name}でねじ ${t.id} が${c.removed ? '外れなかった' : '外れた'}`);
+    if (!c.removed && (await q()) === q0) throw new Error(`tap: ${c.name}で立体が回っていない`);
+    console.log(`tap: ${c.name} → ${gone ? '外れた' : '外れない'}`);
+    if (gone) {
+      await page.evaluate(() => window.__app.undo());
+      await waitRendered(page);
+    }
+  }
+  await page.close();
+}
+
 async function feelShots(context, errors, outside) {
   const before = !!process.env.FEEL_BEFORE;
   const page = await context.newPage();
@@ -2101,6 +2147,7 @@ try {
   if (only('random')) await randomShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('settings')) await settingsShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('look')) await lookShots(browser, errors, outside);
+  if (only('tap')) await tapShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('feel')) await feelShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('resume')) await resumeShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('boot')) await bootShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
