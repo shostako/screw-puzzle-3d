@@ -63,7 +63,8 @@
 //   daily-menu-done.png  ステージへ戻ってから遊び方の画面を開いたところ（今日の1問がクリア済みと星）
 //   あわせて、?random=番号&diff= で同じ番号の盤面が開くこと、おまかせ・今日の1問のクリアでステージの到達が進まないことを確かめる
 //   （設定。保存の無い新しい端末として開き、題名 → 遊び方の画面の「設定」を指でタップして）
-//   settings.png        設定の画面（既定: 音・振動 入、回す速さ ふつう、画質 自動、ネジまる 出す）
+//   settings.png        設定の画面（既定: 音・振動 入、曲 オルゴール、回す速さ ふつう、画質 自動、ネジまる 出す）
+//   settings-track.png  BGM の曲で「ほしぞら」を選んだところ（F）
 //   settings-light.png  画質「軽い」・ネジまる「隠す」にして閉じた盤面（ねじの頭にローレットが無い、左下にネジまるが居ない）
 //   settings-clear.png  「記録を消す」を1回押して、確かめの文字に変わったところ
 //   あわせて、回す速さ「はやい」で同じ指の動きが ふつう の約 1.4 倍回ること、画質「軽い」で描く解像度が 1 になること、
@@ -106,6 +107,13 @@
 //                                    parts（8 の車）、held（子の部品が残る親の最後のねじ）、rescue（行き止まりから続けた時）
 //   あわせて、各導入がちょうど1回ずつ出ること、ねじを外す・回すと閉じること、開き直しても出ないこと、
 //   ふだんの「1本指で回す・ねじをタップで外す」の行が出ないこと、記録を消すとまた出ることを確かめる
+//   （別の問題、F。保存の無い新しい端末として ?stage=12 を開き、右下のサイコロを指でタップして）
+//   other-start.png    開いた直後（右下のいちばん上にサイコロ）
+//   other-swapped.png  1本も外さずにサイコロを押して、すぐ別の盤面に替わったところ（題名の下に「別の問題」）
+//   other-confirm.png  ねじを外した後にサイコロを押して、確かめのカードが出たところ
+//   other-deadend.png  行き止まりのカード（「別の問題にする」が出ていること。押すと確かめずに替わる）
+//   あわせて、「このまま続ける」で盤面が変わらないこと、別の盤面でも再読み込みで続きから戻ること、
+//   別の盤面をクリアするとそのステージのクリアになること、おまかせは同じ難しさの別の番号・今日の1問はふつうのおまかせへ替わることを確かめる
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -115,7 +123,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光、boot は起動とタイトル（E3）、feel は手触りと演出（E5）、tutorial は初めての導入（E4）
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光、boot は起動とタイトル（E3）、feel は手触りと演出（E5）、tutorial は初めての導入（E4）、other は別の問題（F）、tap はねじの上の長押しとぶれ（F）
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -1146,12 +1154,14 @@ async function mascotShots(context, errors, outside) {
   await save('mascot-stuck');
   await page.evaluate(() => window.__app.mascot.force(null));
 
-  // やり直すと待機に戻る
+  // やり直すと、手を振ってから待機に戻る（F）
   const again = await page.locator('#again').boundingBox();
   await tap(cdp, [again.x + again.width / 2, again.y + again.height / 2]);
   await waitRendered(page);
   const after = await page.evaluate(() => window.__app.mascot.action);
-  if (after !== 'idle') throw new Error(`やり直してもネジまるが待機に戻らない: ${after}`);
+  if (after !== 'idle' && after !== 'wave') throw new Error(`やり直してもネジまるが待機に戻らない: ${after}`);
+  await page.waitForFunction(() => window.__app.mascot.action === 'idle', null, { timeout: 5000 }).catch(() => { throw new Error('手を振った後に待機へ戻らない'); });
+  if (!(await history()).includes('wave')) throw new Error(`盤面が始まってもネジまるが手を振らない: ${await history()}`);
   await context.close();
 }
 
@@ -1213,6 +1223,109 @@ async function ratingShots(context, errors, outside) {
 }
 
 // ランダム（D6）。題名から遊び方を選び、おまかせと今日の1問を遊ぶ
+async function otherShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const save = async (name) => {
+    const path = join(outDir, `${name}.png`);
+    await page.screenshot({ path });
+    console.log(`screenshot: ${path}`);
+  };
+  const tapButton = async (sel) => {
+    const box = await page.locator(sel).boundingBox();
+    await tap(cdp, [box.x + box.width / 2, box.y + box.height / 2]);
+  };
+  const sub = () => page.evaluate(() => document.getElementById('subtitle').textContent);
+  const solution = () => page.evaluate(() => JSON.stringify(window.__app.solution));
+  const swapped = (before) => page.waitForFunction((b) => JSON.stringify(window.__app.solution) !== b && window.__app.rendered, before, { timeout: SETTLE_MS });
+
+  await page.goto(url + '?stage=12');
+  await waitRendered(page);
+  await page.waitForTimeout(500);
+  await save('other-start');
+  const first = await solution();
+  // 1本も外していなければ、確かめずにすぐ替える
+  await tapButton('#other-btn');
+  await swapped(first);
+  await waitRendered(page);
+  if (!await page.locator('#other').isHidden()) throw new Error('外す前なのに確かめのカードが出た');
+  const m1 = await page.evaluate(() => window.__app.mode);
+  if (m1.type !== 'stage' || m1.variant !== 1 || await page.evaluate(() => window.__app.stage) !== 12) throw new Error(`別の盤面の遊び方が合わない: ${JSON.stringify(m1)}`);
+  if (!(await sub()).endsWith('・別の問題')) throw new Error(`題名の下に「別の問題」が出ない: ${await sub()}`);
+  await page.waitForTimeout(500);
+  await save('other-swapped');
+
+  // 外した後は確かめる。「このまま続ける」なら盤面も外した数も変わらない
+  const second = await solution();
+  await playSolution(page, 2);
+  await tapButton('#other-btn');
+  await page.waitForSelector('#other:not([hidden])');
+  await page.waitForTimeout(300);
+  await save('other-confirm');
+  await tapButton('#o-no');
+  await page.waitForSelector('#other', { state: 'hidden' });
+  if (await solution() !== second || await page.evaluate(() => window.__app.game.moves) !== 2) throw new Error('「このまま続ける」で盤面が変わった');
+
+  // 再読み込みすると、別の盤面の続きから
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+  await page.goto(url);
+  await waitRendered(page);
+  const m2 = await page.evaluate(() => window.__app.mode);
+  if (m2.variant !== 1 || await solution() !== second || await page.evaluate(() => window.__app.game.moves) !== 2) throw new Error(`別の盤面の続きから戻らない: ${JSON.stringify(m2)}`);
+
+  // 確かめて替える。次の番号へ
+  await tapButton('#other-btn');
+  await page.waitForSelector('#other:not([hidden])');
+  await tapButton('#o-yes');
+  await swapped(second);
+  await waitRendered(page);
+  if (await page.evaluate(() => window.__app.mode.variant) !== 2) throw new Error('2 つ目の別の盤面にならない');
+
+  // 別の盤面をクリアすると、そのステージのクリア（到達が 13 へ）
+  await playSolution(page);
+  await page.waitForSelector('#overlay:not([hidden]) #next:not([hidden])');
+  if (!await page.locator('#end-other').isHidden()) throw new Error('クリアの画面に「別の問題にする」が出た');
+  const reached = await page.evaluate(() => window.__app.reached);
+  if (reached !== 13) throw new Error(`別の盤面のクリアでステージが進まない: ${reached}`);
+  await tapButton('#next');
+  await page.waitForFunction(() => window.__app.stage === 13 && window.__app.rendered, null, { timeout: SETTLE_MS });
+  if (await page.evaluate(() => window.__app.mode.variant) !== undefined) throw new Error('次のステージが別の盤面のまま');
+
+  // 行き止まり（と詰み）のカードにも「別の問題にする」。押すと確かめずに替える（行き止まりの局面は作らずに、カードだけ出す）
+  await playSolution(page, 2);
+  await page.evaluate(() => window.__app.deadEnd());
+  await page.waitForSelector('#overlay:not([hidden]) #end-other:not([hidden])');
+  await page.waitForTimeout(600);
+  await save('other-deadend');
+  const third = await solution();
+  await tapButton('#end-other');
+  await swapped(third);
+  await waitRendered(page);
+  if (!await page.locator('#other').isHidden() || await page.evaluate(() => window.__app.mode.variant) !== 1) throw new Error('行き止まりのカードから別の盤面に替わらない');
+
+  // おまかせは同じ難しさの別の番号、今日の1問はふつうのおまかせへ
+  await page.goto(url + '?random=123&diff=hard');
+  await waitRendered(page);
+  await tapButton('#other-btn');
+  await page.waitForFunction(() => window.__app.mode.no !== 123 && window.__app.rendered, null, { timeout: SETTLE_MS });
+  const r = await page.evaluate(() => window.__app.mode);
+  if (r.type !== 'random' || r.difficulty !== 'hard') throw new Error(`おまかせの別の問題が合わない: ${JSON.stringify(r)}`);
+  await page.goto(url + '?daily');
+  await waitRendered(page);
+  await tapButton('#other-btn');
+  await page.waitForFunction(() => window.__app.mode.type === 'random' && window.__app.rendered, null, { timeout: SETTLE_MS });
+  if (await page.evaluate(() => window.__app.mode.difficulty) !== 'normal') throw new Error('今日の1問の別の問題が「ふつう」のおまかせにならない');
+
+  // 自由な盤面（?seed=）では出さない
+  await page.goto(url + '?seed=4&kind=box');
+  await waitRendered(page);
+  if (!await page.locator('#other-btn').isHidden()) throw new Error('?seed= の盤面にサイコロが出た');
+  await context.close();
+}
+
 async function randomShots(context, errors, outside) {
   const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -1461,11 +1574,18 @@ async function settingsShots(context, errors, outside) {
   const normalTurn = await turnAngle();
   await openSettings();
   const shown = await page.evaluate(() => window.__app.settings.all());
-  if (JSON.stringify(shown) !== JSON.stringify({ sound: true, bgm: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true, drives: false })) throw new Error(`設定の既定が違う: ${JSON.stringify(shown)}`);
+  if (JSON.stringify(shown) !== JSON.stringify({ sound: true, bgm: true, bgmTrack: 'orgel', vibrate: true, speed: 'normal', quality: 'auto', mascot: true, drives: false })) throw new Error(`設定の既定が違う: ${JSON.stringify(shown)}`);
   const card = await page.locator('#settings .card').boundingBox();
   if (card.x < 0 || card.x + card.width > VIEWPORT.width || card.y < 0 || card.y + card.height > VIEWPORT.height) throw new Error('設定の画面がはみ出す');
   await save('settings');
 
+  // BGM の曲（F）: 選ぶと押した形になり、鳴っている曲も替わる
+  await pick('bgmTrack', 'stars');
+  if (await page.locator('#settings .seg[data-key="bgmTrack"] button[data-v="stars"]').getAttribute('aria-pressed') !== 'true') throw new Error('曲を選んでも押した形にならない');
+  const playing = await page.evaluate(() => window.__app.bgmTrack);
+  if (playing && playing !== 'stars') throw new Error(`曲を選んでも BGM が替わらない: ${playing}`);
+  console.log(`BGM の曲: ${playing ?? '（ヘッドレスでは鳴っていない）'}`);
+  await save('settings-track');
   await pick('speed', 'fast');
   await pick('quality', 'light');
   await pick('mascot', 'false');
@@ -1485,7 +1605,7 @@ async function settingsShots(context, errors, outside) {
   await page.reload();
   await waitRendered(page);
   const kept = await page.evaluate(() => window.__app.settings.all());
-  if (JSON.stringify(kept) !== JSON.stringify({ sound: true, bgm: false, vibrate: false, speed: 'fast', quality: 'light', mascot: false, drives: false })) throw new Error(`設定が再読み込みで残らない: ${JSON.stringify(kept)}`);
+  if (JSON.stringify(kept) !== JSON.stringify({ sound: true, bgm: false, bgmTrack: 'stars', vibrate: false, speed: 'fast', quality: 'light', mascot: false, drives: false })) throw new Error(`設定が再読み込みで残らない: ${JSON.stringify(kept)}`);
   if (await page.locator('#mascot').isVisible() || await page.evaluate(() => window.__app.mascotDrawing)) throw new Error('再読み込みでネジまるが戻った');
 
   // 記録を消す: ステージ 3 まで進んだ端末で、2 回押すとステージ 1 に戻る。設定は残る
@@ -1494,6 +1614,9 @@ async function settingsShots(context, errors, outside) {
   await waitRendered(page);
   if (await page.evaluate(() => window.__app.stage) !== 3) throw new Error('ステージ 3 から始まらない');
   await openSettings();
+  // BGM を切ったまま曲を選ぶと、BGM が入る（選んだ曲を聞かせる）
+  await pick('bgmTrack', 'walk');
+  if (!(await page.evaluate(() => window.__app.settings.get('bgm')))) throw new Error('曲を選んでも BGM が入らない');
   await tapButton('#s-clear');
   if (await page.locator('#s-clear').textContent() !== 'もう一度押すと消えます') throw new Error('記録を消すの確かめが出ない');
   await save('settings-clear');
@@ -1620,6 +1743,52 @@ async function undoShots(context, errors, outside) {
 
 // 手触りと演出（E5）: 押し込み・塞いでいる板の光・箱の連鎖・クリアのねじの雨・★ごとのクリアのカード・詰みのカード。
 // FEEL_BEFORE=1 は変更前（E5 の前の dist）を同じ場面で撮るとき用で、E5 で足した物の確かめを飛ばす
+// ねじの上に置いた指（F）: 沈んだねじは、長く押しても、指の腹が少しぶれても、離せば外れる。
+// はっきり動かしたら回す操作になり、外れない。撮る画は無く、確かめるだけ
+async function tapShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await page.goto(url + '?stage=8');
+  await waitRendered(page);
+  // 周りのねじから 40px 以上離れた、外せる見えているねじ
+  const target = () => page.evaluate(() => {
+    const seen = window.__app.visibleScrews();
+    const legal = new Set(window.__app.legal());
+    return seen.find((s) => legal.has(s.id) && seen.every((o) => o.id === s.id || Math.hypot(o.x - s.x, o.y - s.y) >= 40)) ?? null;
+  });
+  const where = (id) => page.evaluate((id) => window.__app.game.state.where[id], id);
+  const cases = [
+    { name: '0.9 秒の長押し', path: [[0, 0]], hold: 900, removed: true },
+    { name: '14px のぶれ', path: [[0, 0], [7, 3], [14, 4]], hold: 250, removed: true },
+    { name: '60px なぞる', path: [[0, 0], [20, 0], [40, 0], [60, 0]], hold: 150, removed: false },
+  ];
+  for (const c of cases) {
+    const t = await target();
+    if (!t) throw new Error(`tap: 周りの空いた外せるねじが無い`);
+    const q = () => page.evaluate(() => window.__app.model.quaternion.toArray().join());
+    const q0 = await q();
+    await touch(cdp, 'touchStart', [[t.x, t.y]]);
+    for (const [dx, dy] of c.path.slice(1)) await touch(cdp, 'touchMove', [[t.x + dx, t.y + dy]]);
+    await sleep(c.hold);
+    if (c.removed && !(await page.evaluate(() => window.__app.pressed))) throw new Error(`tap: ${c.name}の間にねじが沈んでいない`);
+    await touch(cdp, 'touchEnd', []);
+    await waitRendered(page);
+    const gone = (await where(t.id)) !== 'board';
+    if (gone !== c.removed) throw new Error(`tap: ${c.name}でねじ ${t.id} が${c.removed ? '外れなかった' : '外れた'}`);
+    if (!c.removed && (await q()) === q0) throw new Error(`tap: ${c.name}で立体が回っていない`);
+    console.log(`tap: ${c.name} → ${gone ? '外れた' : '外れない'}`);
+    if (gone) {
+      await page.evaluate(() => window.__app.undo());
+      await waitRendered(page);
+    }
+  }
+  await page.close();
+}
+
 async function feelShots(context, errors, outside) {
   const before = !!process.env.FEEL_BEFORE;
   const page = await context.newPage();
@@ -1979,9 +2148,11 @@ try {
   if (only('size')) await sizeShots(browser, errors, outside);
   if (only('undo')) await undoShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('rating')) await ratingShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('other')) await otherShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('random')) await randomShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('settings')) await settingsShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('look')) await lookShots(browser, errors, outside);
+  if (only('tap')) await tapShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('feel')) await feelShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('resume')) await resumeShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('boot')) await bootShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);

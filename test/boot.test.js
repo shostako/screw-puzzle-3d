@@ -1,6 +1,6 @@
 // 起動の画面（E3）: タイトルを挟む条件・進みの棒・wasm の読み込みの見張り
 import { describe, it, expect } from 'vitest';
-import { wantsTitle, wasmProgress, watchWasm, STEPS } from '../src/boot.js';
+import { wantsTitle, wantsHold, holdTime, HOLD, wasmProgress, watchWasm, STEPS } from '../src/boot.js';
 
 const q = (s = '') => new URLSearchParams(s);
 const base = { query: q(), webdriver: false, reached: 1, resuming: false, chosen: false };
@@ -14,6 +14,17 @@ describe('起動の画面', () => {
     expect(wantsTitle({ ...base, webdriver: true })).toBe(false);    // スクリーンショットとテストは盤面から
     expect(wantsTitle({ ...base, query: q('boot=skip') })).toBe(false);
     expect(wantsTitle({ ...base, reached: 9, webdriver: true, query: q('boot=title') })).toBe(true);
+  });
+
+  it('タイトルを挟まない時も、起動の画面は少し残してから消す（F2）', () => {
+    expect(wantsHold({ query: q(), webdriver: false })).toBe(true);
+    expect(wantsHold({ query: q(), webdriver: true })).toBe(false);   // スクリーンショットとテストは待たせない
+    expect(wantsHold({ query: q('boot=skip'), webdriver: false })).toBe(false);
+    expect(wantsHold({ query: q('boot=hold'), webdriver: true })).toBe(true);
+    // 速く読み終えても開いてから minShow までは残す。遅くても greet だけはバンザイを見せる
+    expect(holdTime(300)).toBe(HOLD.minShow - 300);
+    expect(holdTime(HOLD.minShow + 5000)).toBe(HOLD.greet);
+    expect(holdTime(HOLD.minShow - HOLD.greet)).toBe(HOLD.greet);
   });
 
   it('棒は JS が届いた所から wasm を読み終える所まで、読んだバイト数で伸びる', () => {
