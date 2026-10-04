@@ -68,6 +68,11 @@
 //   settings-clear.png  「記録を消す」を1回押して、確かめの文字に変わったところ
 //   あわせて、回す速さ「はやい」で同じ指の動きが ふつう の約 1.4 倍回ること、画質「軽い」で描く解像度が 1 になること、
 //   設定が再読み込みの後も残ること、記録を消すとステージ 1 に戻り設定は残ることを確かめる
+//   （質感と光、E2。保存の無い新しい端末として ?stage=番号 を開く）
+//   look-stage<番号>.png       ステージ 1・8（車）・10（家）・12（ぶた）・37（6 色）を開いた直後
+//   look-stage<番号>-gray.png  同じ画面を色を抜いて（グレースケール）撮ったもの
+//   look-drives<番号>.png / -gray.png / -zoom.png  設定「ねじ穴の形」を「色ごと」にしたステージ 37・23（6 色）と、色を抜いたもの、立体の拡大。
+//                色を抜いても、穴の形でねじの色の組が見分けられるか
 //   （続きから遊べる、E10。保存の無い新しい端末として開き、途中まで外してから再読み込みする）
 //   resume-stage-before.png / resume-stage-after.png    ステージ 8（車）を 9 本外して向きを変えたところと、再読み込みした直後
 //   resume-random-before.png / resume-random-after.png  おまかせ（やさしい #777）を 6 本外したところと、再読み込みした直後
@@ -99,7 +104,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -1232,7 +1237,7 @@ async function settingsShots(context, errors, outside) {
   const normalTurn = await turnAngle();
   await openSettings();
   const shown = await page.evaluate(() => window.__app.settings.all());
-  if (JSON.stringify(shown) !== JSON.stringify({ sound: true, bgm: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true })) throw new Error(`設定の既定が違う: ${JSON.stringify(shown)}`);
+  if (JSON.stringify(shown) !== JSON.stringify({ sound: true, bgm: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true, drives: false })) throw new Error(`設定の既定が違う: ${JSON.stringify(shown)}`);
   const card = await page.locator('#settings .card').boundingBox();
   if (card.x < 0 || card.x + card.width > VIEWPORT.width || card.y < 0 || card.y + card.height > VIEWPORT.height) throw new Error('設定の画面がはみ出す');
   await save('settings');
@@ -1256,7 +1261,7 @@ async function settingsShots(context, errors, outside) {
   await page.reload();
   await waitRendered(page);
   const kept = await page.evaluate(() => window.__app.settings.all());
-  if (JSON.stringify(kept) !== JSON.stringify({ sound: true, bgm: false, vibrate: false, speed: 'fast', quality: 'light', mascot: false })) throw new Error(`設定が再読み込みで残らない: ${JSON.stringify(kept)}`);
+  if (JSON.stringify(kept) !== JSON.stringify({ sound: true, bgm: false, vibrate: false, speed: 'fast', quality: 'light', mascot: false, drives: false })) throw new Error(`設定が再読み込みで残らない: ${JSON.stringify(kept)}`);
   if (await page.locator('#mascot').isVisible() || await page.evaluate(() => window.__app.mascotDrawing)) throw new Error('再読み込みでネジまるが戻った');
 
   // 記録を消す: ステージ 3 まで進んだ端末で、2 回押すとステージ 1 に戻る。設定は残る
@@ -1382,6 +1387,37 @@ async function undoShots(context, errors, outside) {
   if (rating.rewinds !== 2) throw new Error(`評価の戻るの回数が ${rating.rewinds}（2 のはず）`);
   await shoot('undo-cleared');
   await context.close();
+}
+
+async function lookShots(browser, errors, outside) {
+  // LOOK=1,8 のように撮るステージを絞れる
+  const pick = process.env.LOOK?.split(',').map(Number);
+  const runs = [1, 8, 10, 12, 37].map((n) => ({ n, drives: false })).concat([37, 23].map((n) => ({ n, drives: true })))
+    .filter(({ n }) => !pick || pick.includes(n));
+  for (const { n, drives } of runs) {
+    const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    if (drives) await context.addInitScript(() => localStorage.setItem('screw-puzzle-3d.settings', JSON.stringify({ drives: true })));
+    const page = await context.newPage();
+    page.on('pageerror', (e) => errors.push(String(e)));
+    page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+    page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+    await page.goto(`${url}?stage=${n}`);
+    await waitRendered(page);
+    for (const gray of [false, true]) {
+      if (gray) await page.evaluate(() => { document.documentElement.style.filter = 'grayscale(1)'; });
+      const file = join(outDir, `look-${drives ? 'drives' : 'stage'}${n}${gray ? '-gray' : ''}.png`);
+      await page.screenshot({ path: file });
+      console.log(`screenshot: ${file}`);
+    }
+    if (drives) {
+      const icons = await page.evaluate(() => document.body.classList.contains('drives'));
+      if (!icons) throw new Error('設定「色ごと」で body に drives が付いていない');
+      const file = join(outDir, `look-drives${n}-zoom.png`);
+      await page.screenshot({ path: file, clip: { x: 40, y: 330, width: 310, height: 310 } });
+      console.log(`screenshot: ${file}`);
+    }
+    await context.close();
+  }
 }
 
 // 続きから遊べる（E10）。途中まで外して再読み込みし、同じ局面・同じ時間で続くことを確かめる
@@ -1530,6 +1566,7 @@ try {
   if (only('rating')) await ratingShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('random')) await randomShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('settings')) await settingsShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('look')) await lookShots(browser, errors, outside);
   if (only('resume')) await resumeShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('chapter')) await chapterShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('progress')) await progressShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);

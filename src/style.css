@@ -3,8 +3,8 @@
   --sky-top: #9fd3ff;
   --sky-mid: #e6f4ff;
   --sky-bottom: #fff4d6;
-  --mat: #ffffff;
-  --shade: rgba(60, 90, 130, 0.16);
+  --mat: #f6f9fc;
+  --shade: rgba(60, 90, 130, 0.2);
   --ink: #1d2430;
   --ink-soft: #5d6878;
   --panel: rgba(255, 255, 255, 0.82);
@@ -16,11 +16,11 @@ html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  /* 空のグラデーション、白い丸いマット、マットに落ちる立体の影（3D の外で描くので描く負荷が無い）。
+  /* 空のグラデーション、白い丸いマット（縁はぼかす）、マットに落ちる立体の影（3D の外で描くので描く負荷が無い）。
      マットと影の位置と大きさは main.js が立体の見かけの大きさから入れる（--mat-* / --shade-*） */
   background:
     radial-gradient(var(--shade-rx, 36%) var(--shade-ry, 5%) at 50% var(--shade-y, 77%), var(--shade), transparent),
-    radial-gradient(var(--mat-rx, 84%) var(--mat-ry, 14%) at 50% var(--mat-y, 82%), var(--mat) 97%, transparent 100%),
+    radial-gradient(var(--mat-rx, 84%) var(--mat-ry, 14%) at 50% var(--mat-y, 82%), var(--mat) 90%, color-mix(in srgb, var(--mat) 50%, transparent) 96%, transparent 100%),
     linear-gradient(var(--sky-top), var(--sky-mid) 62%, var(--sky-bottom));
   background-color: var(--sky-mid);
   color: var(--ink);
@@ -223,6 +223,26 @@ button {
   background: #17191d;
   clip-path: polygon(25% 7%, 75% 7%, 100% 50%, 75% 93%, 25% 93%, 0 50%);
 }
+/* 設定「ねじ穴の形」を「色ごと」にしたとき（E2）: 印の穴と箱の札を、色ごとの穴の形（--drive。main.js が scene.js の絵を入れる）にする */
+.drives .dot::after {
+  inset: 13%;
+  clip-path: none;
+  background: var(--drive) center / contain no-repeat;
+}
+.drives .box:not(.empty)::before {
+  content: "";
+  position: absolute;
+  top: -11px;
+  left: -11px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: var(--drive) center / 74% no-repeat, var(--c);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.18);
+  z-index: 1;
+}
+
 /* 案内の行は、文がある時だけ待機スロットの下に札で重ねて出す（E1）。HUD の高さに入れないので、立体の空きを削らない */
 #hint {
   position: absolute;
