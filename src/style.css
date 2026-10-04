@@ -164,6 +164,19 @@ button {
   transition: transform 0.16s cubic-bezier(0.3, 1.5, 0.6, 1), opacity 0.08s;
 }
 .box.closing { animation: thump 0.3s 0.13s ease-out; }
+/* 連鎖（E5）: ふたの印は main.js が data-lid に入れる（1 は ✓、2 からは星の数）。連鎖のふたは金の星で、はずみも大きい */
+.box[data-lid]::after { content: attr(data-lid); }
+.box.chain::after {
+  font-size: 20px;
+  letter-spacing: -1px;
+  color: #fff3a8;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.22), 0 0 8px rgba(255, 220, 90, 0.9);
+}
+.box.chain.closing { animation: thump-big 0.36s 0.13s ease-out; }
+@keyframes thump-big {
+  30% { transform: scale(1.16, 0.88); }
+  60% { transform: scale(0.95, 1.06); }
+}
 @keyframes thump {
   30% { transform: scale(1.08, 0.92); }
   60% { transform: scale(0.97, 1.03); }
@@ -351,13 +364,19 @@ button {
   to { translate: var(--dx) var(--dy); scale: 1.1; opacity: 0; }
 }
 
-/* クリアと詰み */
+/* クリアのねじの雨（E5）。動きは main.js が Web Animations で付ける。終わりのカード（#overlay、z-index 3）より手前に降らせる */
+#rain { position: fixed; inset: 0; pointer-events: none; z-index: 4; overflow: hidden; }
+.flyer.drop { opacity: 0.95; }
+
+/* クリアと詰み。幕は後ろの HUD の文字を少しぼかして、カードの上に乗るネジまると重ならないようにする（E5） */
 #overlay {
   position: fixed;
   inset: 0;
   display: grid;
   place-items: center;
-  background: rgba(29, 36, 48, 0.35);
+  background: rgba(29, 36, 48, 0.42);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
   z-index: 3;
   animation: fade 0.3s ease-out;
 }
@@ -373,7 +392,7 @@ button {
 }
 .card h2 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: 0.08em; }
 .card p { margin: 8px 0 18px; color: var(--ink-soft); font-size: 14px; }
-#again, #next, #rewind, #back1, #resume {
+#again, #next, #rewind, #back1, #resume, #end-hint {
   display: block;
   margin: 0 auto;
   min-width: 180px;
@@ -387,8 +406,36 @@ button {
   box-shadow: 0 4px 0 #b07c00;
 }
 #overlay.cleared h2 { color: #d08a00; }
-#next[hidden], #rewind[hidden], #back1[hidden], #resume[hidden] { display: none; }
-#rewind:disabled { opacity: 0.6; }
+#next[hidden], #rewind[hidden], #back1[hidden], #resume[hidden], #end-hint[hidden] { display: none; }
+#rewind:disabled, #end-hint:disabled { opacity: 0.6; }
+/* 詰み・行き止まり（E5）: 赤い文言をやめ、「戻る」と「ヒント」を大きな2つのボタンで並べる */
+#overlay.stuck h2, #overlay.deadend h2 { color: var(--ink); }
+#end-help { display: flex; justify-content: center; gap: 12px; margin: 0 0 6px; }
+#end-help:not(:has(button:not([hidden]))) { display: none; }
+#end-help .big {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  min-width: 0;
+  width: 116px;
+  min-height: 0;
+  padding: 12px 6px 10px;
+  border-radius: 20px;
+  font-size: 18px;
+}
+#end-help .big svg {
+  width: 34px;
+  height: 34px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+#end-help .big small { font-size: 12px; font-weight: 600; opacity: 0.8; }
+#end-hint { background: #fff4cc; color: #6b4a00; box-shadow: 0 4px 0 #e2b84a; border: 2px solid #f0c75a; }
 /* 次へがあるときの「もう一度」は控えめに */
 #again.sub, #back1.sub, #resume.sub {
   margin-top: 10px;
@@ -419,7 +466,11 @@ button {
   width: 150px;
   height: 194px;
   margin: -150px auto 0;
+  /* カードの上へはみ出す所は、カードと同じ白の丸い台座に乗せる（後ろの HUD の文字と重ならない。E5） */
+  border-radius: 75px 75px 0 0;
+  background: radial-gradient(circle at 50% 96px, #fff 0 70px, rgba(255, 255, 255, 0) 71px);
 }
+#overlay.cleared .card #mascot { background: radial-gradient(circle at 50% 96px, #fff 0 64px, #fff1c4 65px 70px, rgba(255, 241, 196, 0) 71px); }
 
 /* クリアの評価: 星3つ（付いた星は金色で順にはじける）と、時間・自己ベストの行 */
 #end-stars {

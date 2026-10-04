@@ -148,6 +148,15 @@ describe('音の作り（E6）', () => {
     expect(soundOf('plate')).toBe(SOUNDS.plate);
   });
 
+  it('箱の連鎖（E5）: 2 連鎖からきらめきの音程が上がり、音を足しても割れない', () => {
+    expect(soundOf('boxFull', { chain: 1 })).toBe(SOUNDS.boxFull);
+    const top = (c) => Math.max(...soundOf('boxFull', { chain: c }).filter((n) => !n.noise).map((n) => n.f));
+    expect(top(2)).toBeGreaterThan(top(1));
+    expect(top(3)).toBeGreaterThan(top(2));
+    expect(top(9)).toBe(top(4));
+    for (const c of [2, 3, 4]) expect(MASTER * VOLUME.boxFull * peakOf(soundOf('boxFull', { chain: c }))).toBeLessThanOrEqual(1);
+  });
+
   it('BGM: 8 小節のループで、旋律は和音の音か C 長調の音だけ。どの拍にも何かが鳴る', () => {
     const scale = new Set([0, 2, 4, 5, 7, 9, 11]);
     expect(BGM.melody).toHaveLength(BGM.roots.length);

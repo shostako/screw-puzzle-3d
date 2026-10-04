@@ -104,7 +104,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光、feel は手触りと演出（E5）
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -498,7 +498,7 @@ async function progressShots(context, errors, outside) {
   await page.waitForTimeout(1600);
   await save('progress-chapter-end');
   // ネジまるがもう1回跳ぶ（成功の動きが2回）
-  await page.waitForFunction(() => window.__app.mascot.history.filter((h) => h === 'win').length >= 2, null, { timeout: 8000 }).catch(() => { throw new Error('章の終わりでネジまるがもう1回跳ばない'); });
+  await page.waitForFunction(() => window.__app.mascot.history.filter((h) => h.startsWith('win')).length >= 2, null, { timeout: 8000 }).catch(() => { throw new Error('章の終わりでネジまるがもう1回跳ばない'); });
   await tapButton('#next');
   await page.waitForFunction(() => window.__app.stage === 11 && !window.__app.why().loading, null, { timeout: SETTLE_MS });
   await page.waitForSelector('.ch-banner');
@@ -901,7 +901,8 @@ async function mascotShots(context, errors, outside) {
   await page.waitForSelector('#overlay:not([hidden])');
   const h = await history();
   if (!h.includes('joy')) throw new Error(`箱が満杯でネジまるが喜ばない: ${h}`);
-  if (h.at(-1) !== 'win' || await page.evaluate(() => window.__app.mascot.action) !== 'win') throw new Error(`クリアでネジまるが成功の動きをしない: ${h}`);
+  // 星の数で喜び方が変わる（E5: ★3 は win、★2 は win2、★1 は win1）
+  if (!h.at(-1).startsWith('win') || await page.evaluate(() => window.__app.mascot.action) !== h.at(-1)) throw new Error(`クリアでネジまるが成功の動きをしない: ${h}`);
   // 跳び終えてバンザイしたところ（成功の動きは 3.3 秒）を撮る
   await page.waitForTimeout(3600);
   await page.evaluate(() => window.__app.timeScale(0));
@@ -1280,6 +1281,13 @@ async function settingsShots(context, errors, outside) {
   await context.close();
 }
 
+// 詰ませる手順。このゲームの詰みは「待機スロットが満杯で、出ている箱の色のねじが全部、動かない板に隠れている」ときだけで、
+// 序盤のステージではまず起きない。ステージ 29 のこの順（ルールだけで乱択して探した 9 手）なら詰み、7 手の後からは解ける手順が無い（行き止まり）。
+// ステージの作り方が変わったら探し直す（E8 で章の曲線が入り、前のステージ 25 の手順は使えなくなった）
+const STUCK_STAGE = 29;
+const STUCK_PATH = ['window1-1', 'hull-3', 'buoy2-2', 'buoy2-1', 'funnel-1', 'buoy1-1', 'deck-1', 'buoy1-2', 'funnel-2'];
+const DEAD_AT = 7;
+
 async function undoShots(context, errors, outside) {
   const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -1318,15 +1326,13 @@ async function undoShots(context, errors, outside) {
   await playSolution(page, 6);
   if ((await moves()) !== 6) throw new Error('戻した後に外し直せない');
 
-  // 詰ませる。このゲームの詰みは「待機スロットが満杯で、出ている箱の色のねじが全部、動かない板に隠れている」ときだけで、
-  // 序盤のステージではまず起きない。ステージ 25 のこの順（手元で探した 9 手）なら詰む。生成器が変わったら探し直す
-  const STUCK_PATH = ['bottom-3', 'back-3', 'top-2', 'back-1', 'back-4', 'top-1', 'bottom-1', 'bottom-2', 'top-3'];
-  await page.goto(url + '?stage=25');
+  // 詰ませる（STUCK_PATH）
+  await page.goto(url + `?stage=${STUCK_STAGE}`);
   await waitRendered(page);
   let k = 0;
   for (const [n, id] of STUCK_PATH.entries()) {
-    // 5 手目の後は、ヒントでも解ける手順が見つからない（行き止まり）。ヒントのボタンから戻る先へ案内する画面が出る
-    if (n === 6) {
+    // DEAD_AT 手の後は、ヒントでも解ける手順が見つからない（行き止まり）。ヒントのボタンから戻る先へ案内する画面が出る
+    if (n === DEAD_AT) {
       await tapButton('#hint-btn');
       await page.waitForSelector('#overlay.deadend:not([hidden]) #rewind:not([hidden])');
       await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
@@ -1386,6 +1392,187 @@ async function undoShots(context, errors, outside) {
   const rating = await page.evaluate(() => window.__app.rating);
   if (rating.rewinds !== 2) throw new Error(`評価の戻るの回数が ${rating.rewinds}（2 のはず）`);
   await shoot('undo-cleared');
+  await context.close();
+}
+
+// 手触りと演出（E5）: 押し込み・塞いでいる板の光・箱の連鎖・クリアのねじの雨・★ごとのクリアのカード・詰みのカード。
+// FEEL_BEFORE=1 は変更前（E5 の前の dist）を同じ場面で撮るとき用で、E5 で足した物の確かめを飛ばす
+async function feelShots(context, errors, outside) {
+  const before = !!process.env.FEEL_BEFORE;
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const save = async (name, clip) => {
+    const path = join(outDir, `${name}.png`);
+    await page.screenshot({ path, clip });
+    console.log(`screenshot: ${path}`);
+  };
+  const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  const tapButton = async (sel) => {
+    await page.waitForTimeout(300);
+    const box = await page.locator(sel).boundingBox();
+    await tap(cdp, [box.x + box.width / 2, box.y + box.height / 2]);
+  };
+
+  // 押し込み: 見えているねじに指を置いたまま撮り、離すとそのねじが外れる
+  await page.goto(url + '?seed=4&kind=box');
+  await waitRendered(page);
+  const target = await page.evaluate(() => {
+    const legal = new Set(window.__app.game.legal());
+    return window.__app.visibleScrews().find((s) => legal.has(s.id));
+  });
+  if (!target) throw new Error('外せる見えているねじが無い');
+  const clip = { x: target.x - 70, y: target.y - 70, width: 140, height: 140 };
+  await save('feel-press-0', clip);
+  await touch(cdp, 'touchStart', [[target.x, target.y]]);
+  await page.waitForTimeout(250);
+  await frames();
+  if (!before) {
+    const p = await page.evaluate(() => window.__app.pressed);
+    if (!p || p.id !== target.id || p.depth < 0.15) throw new Error(`指を置いたねじが沈まない: ${JSON.stringify(p)}`);
+  }
+  await save('feel-press-1', clip);
+  // 撮る間に長押しになったので、離してもタップにはならない（ねじは戻るだけ）。続けて短くタップすると外れる
+  await touch(cdp, 'touchEnd', []);
+  await waitRendered(page);
+  if (!before && await page.evaluate(() => window.__app.pressed)) throw new Error('離しても押し込みが残っている');
+  // ヘッドレスが混んでいると指を置いてから離すまでが 350ms を超えてタップにならないことがあるので、1回だけ押し直す
+  const onBoard = () => page.evaluate((id) => window.__app.game.state.where[id] === 'board', target.id);
+  for (let i = 0; i < 2 && await onBoard(); i++) {
+    await tap(cdp, [target.x, target.y]);
+    await waitRendered(page);
+  }
+  if (await onBoard()) throw new Error('押し込んだねじがタップで外れない');
+  // 回し始めたら沈めたねじは戻り、外れない
+  if (!before) {
+    const t2 = await page.evaluate(() => window.__app.visibleScrews()[0]);
+    await touch(cdp, 'touchStart', [[t2.x, t2.y]]);
+    await page.waitForTimeout(100);
+    for (let i = 1; i <= 8; i++) await touch(cdp, 'touchMove', [[t2.x + i * 8, t2.y]]);
+    if (await page.evaluate(() => window.__app.pressed)) throw new Error('回し始めても押し込みが戻らない');
+    await touch(cdp, 'touchEnd', []);
+    await waitRendered(page);
+    if (await page.evaluate((id) => window.__app.game.state.where[id], t2.id) !== 'board') throw new Error('回したのにねじが外れた');
+  }
+
+  // 塞いでいる板の光: 隠れたねじをタップし、光が強い所で時計を止めて撮る
+  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
+  await waitRendered(page);
+  // 中の棚のねじ shelf1-2 は、この向きで手前に見えている天板（top）に塞がれている
+  const blocked = await page.evaluate(() => {
+    const g = window.__app.game, legal = new Set(g.legal());
+    const ids = Object.keys(g.state.where).filter((id) => g.state.where[id] === 'board' && !legal.has(id));
+    return ids.includes('shelf1-2') ? 'shelf1-2' : ids[0];
+  });
+  if (!blocked) throw new Error('隠れたねじが見つからない');
+  if (!before && !(await page.evaluate((id) => window.__app.blockersOf(id), blocked)).length) throw new Error(`ねじ ${blocked} を塞いでいる板が無い`);
+  await page.evaluate(() => window.__app.timeScale(0.1));
+  if (await page.evaluate((id) => window.__app.tapScrew(id), blocked) !== 'blocked') throw new Error(`ねじ ${blocked} が隠れていない`);
+  if (!before) {
+    await page.waitForFunction(() => {
+      let lit = false;
+      window.__app.model.traverse((o) => { if (o.userData.plateId && o.material.emissive.b > 0.3) lit = true; });
+      return lit;
+    }, null, { timeout: 10000, polling: 'raf' }).catch(() => { throw new Error('外せないねじの塞いでいる板が光らない'); });
+  } else await page.waitForTimeout(1500);
+  await page.evaluate(() => window.__app.timeScale(0));
+  await frames();
+  await save('feel-blocked');
+  await page.evaluate(() => window.__app.timeScale(1));
+  await waitRendered(page);
+
+  // 箱の連鎖: 手順のねじを待たずに続けて外し、2 連鎖目のふたが閉まった所を撮る
+  const path = await page.evaluate(() => window.__app.solution.filter((id) => window.__app.game.state.where[id] === 'board'));
+  let chained = false;
+  for (const id of path) {
+    const reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
+    if (reason === 'blocked') {
+      await waitRendered(page);
+      if (await page.evaluate((id) => window.__app.tapScrew(id), id) !== 'ok') continue;
+    }
+    if (before) continue;
+    chained = await page.waitForFunction(() => document.querySelector('#boxes .box.chain.closing'), null, { timeout: 250, polling: 'raf' }).then(() => true, () => false);
+    if (chained) break;
+  }
+  if (!before) {
+    if (!chained) chained = await page.waitForFunction(() => document.querySelector('#boxes .box.chain.closing'), null, { timeout: 8000, polling: 'raf' }).then(() => true, () => false);
+    if (!chained) throw new Error('続けて外しても箱が連鎖しない');
+    await page.evaluate(() => window.__app.timeScale(0));
+    await page.evaluate(() => {
+      for (const a of document.querySelector('#boxes .box.chain.closing').getAnimations({ subtree: true })) if (a.effect?.pseudoElement === '::after') a.finish();
+    });
+    await frames();
+    const lid = await page.evaluate(() => document.querySelector('#boxes .box.chain.closing').dataset.lid);
+    if (!lid.startsWith('★★')) throw new Error(`連鎖のふたに星が無い: ${lid}`);
+    await save('feel-chain', { x: 0, y: 40, width: 390, height: 150 });
+    await page.evaluate(() => window.__app.timeScale(1));
+  }
+  await waitRendered(page);
+
+  // クリア: ステージ 1 を、ヒントの回数で ★3・★2・★1 にしてクリアする。★3 ではねじの雨の途中も撮る
+  for (const [stars, hints] of [[3, 0], [2, 1], [1, 2]]) {
+    await page.goto(url + '?stage=1');
+    await waitRendered(page);
+    for (let i = 0; i < hints; i++) await page.evaluate(() => window.__app.countHint());
+    // 目安の時間を超えると星が減るので、演出を待たずに続けて外す（隠れていたら落ち着くのを待ってもう一度）
+    const sol = await page.evaluate(() => window.__app.solution);
+    for (const id of sol) {
+      if (await page.evaluate((id) => window.__app.tapScrew(id), id) === 'blocked') {
+        await waitRendered(page);
+        await page.evaluate((id) => window.__app.tapScrew(id), id);
+      }
+    }
+    if (stars === 3 && !before) {
+      await page.waitForFunction(() => document.querySelectorAll('.flyer.drop').length > 10 && document.getElementById('overlay').hidden, null, { timeout: 10000, polling: 'raf' })
+        .catch(() => { throw new Error('クリアでねじの雨が降らない'); });
+      // カードが出た直後（雨はカードより手前に降り続けている）
+      await page.waitForSelector('#overlay.cleared:not([hidden])', { timeout: 10000 });
+      await page.waitForTimeout(120);
+      await page.evaluate(() => window.__app.timeScale(0));
+      await frames();
+      await save('feel-rain');
+      await page.evaluate(() => window.__app.timeScale(1));
+    }
+    await page.waitForSelector('#overlay.cleared:not([hidden])');
+    const got = await page.evaluate(() => window.__app.rating.stars);
+    if (got !== stars) throw new Error(`★${stars} のつもりが ★${got}`);
+    const action = await page.evaluate(() => window.__app.mascot.action);
+    const want = before ? 'win' : { 3: 'win', 2: 'win2', 1: 'win1' }[stars];
+    if (action !== want) throw new Error(`★${stars} のクリアでネジまるが ${action}（${want} のはず）`);
+    // 動きのいちばん「らしい」所で止めて撮る（★3 は回りながら跳ぶ頂点、★2 は掲げて跳ぶ頂点、★1 は額をぬぐう所）
+    await page.waitForTimeout(1400);
+    await page.evaluate((a) => window.__app.mascot.force(a, a === 'win1' ? 1.0 : a === 'win' ? 0.25 : 0.55), action);
+    await frames();
+    await save(`feel-cleared-${stars}`);
+    await page.evaluate(() => window.__app.mascot.force(null));
+  }
+
+  // 詰みのカード
+  await page.goto(url + `?stage=${STUCK_STAGE}`);
+  await waitRendered(page);
+  let k = 0;
+  for (const id of STUCK_PATH) {
+    for (let tries = 0; ; tries++) {
+      const reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
+      if (reason === 'ok') break;
+      if (reason !== 'blocked' || tries >= 12) throw new Error(`詰ませる手順のねじ ${id} を外せない: ${reason}`);
+      await page.evaluate((v) => window.__app.view(...v, 1), VIEWS[k++ % VIEWS.length]);
+      await waitRendered(page);
+    }
+    await waitRendered(page);
+  }
+  await page.waitForSelector('#overlay.stuck:not([hidden])');
+  await page.waitForTimeout(2600);   // 汗が垂れるまで
+  await save('feel-stuck');
+  if (!before) {
+    // 「ヒント」は解ける所まで戻してから、次に外すねじに金色の輪を出す
+    await tapButton('#end-hint');
+    await page.waitForFunction(() => window.__app.hintScrew && window.__app.game.status === 'playing', null, { timeout: 20000 })
+      .catch(() => { throw new Error('詰みのカードの「ヒント」で戻ってヒントが出ない'); });
+    if (!(await page.locator('#overlay').isHidden())) throw new Error('ヒントの後もカードが閉じない');
+  }
   await context.close();
 }
 
@@ -1567,6 +1754,7 @@ try {
   if (only('random')) await randomShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('settings')) await settingsShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('look')) await lookShots(browser, errors, outside);
+  if (only('feel')) await feelShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('resume')) await resumeShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('chapter')) await chapterShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('progress')) await progressShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
