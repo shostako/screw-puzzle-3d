@@ -166,12 +166,19 @@ export function pickLevel(config, seedAt, extra = {}) {
 }
 
 // ステージ番号の盤面。シードは n * 1000 + 0, 1, 2 …。
-// meta に stage・章の番号 chapter・空の名前 sky（E8）と、使ったシードを持つ（?seed= で同じ盤面を開ける）
-export function stageLevel(n) {
+// meta に stage・章の番号 chapter・空の名前 sky（E8）と、使ったシードを持つ（?seed= で同じ盤面を開ける）。
+// variant（F「別の問題」）が 1 以上なら、同じ設定（形・段・条件）のまま別のシードで作った盤面。シードは
+// n * 1000 + variant * SEED_TRIES + 0, 1, 2 …（そのステージの 1000 個の中で、ほかの variant と重ならない）。meta に variant を持つ
+export const MAX_VARIANT = Math.floor(1000 / SEED_TRIES) - 1;
+export function stageLevel(n, variant = 0) {
+  if (!Number.isInteger(variant) || variant < 0 || variant > MAX_VARIANT) throw new Error(`別の盤面の番号が正しくない: ${variant}`);
   try {
     const ch = chapterOf(n);
-    return pickLevel(stageConfig(n), (t) => n * 1000 + t, { stage: n, chapter: ch.no, sky: ch.sky });
+    const extra = { stage: n, chapter: ch.no, sky: ch.sky, ...(variant ? { variant } : {}) };
+    return pickLevel(stageConfig(n), (t) => n * 1000 + variant * SEED_TRIES + t, extra);
   } catch {
     throw new Error(`ステージ ${n} の盤面を作れなかった`);
   }
 }
+// 次の別の盤面の番号（1〜MAX_VARIANT を回る。0 の元の盤面には戻らない）
+export const nextVariant = (v = 0) => (v % MAX_VARIANT) + 1;
