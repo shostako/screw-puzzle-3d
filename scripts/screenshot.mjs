@@ -77,6 +77,13 @@
 //   続くこと、続きからクリアできて保存が消えること、壊れた保存は黙って最初から始まることを確かめる
 //   （章と難しさの曲線、E8。?stage=番号 で章の頭・中ほど・大物を開く。CHAPTER=10,11 で番号を絞れる）
 //   chapter-stage<番号>.png  開いた直後（題名の下に「第N章「章の名前」 何番目/10」）
+//   （進行と報酬、E9。到達 14・自己ベストを入れた端末として開き、題名 → 遊び方 → ステージを指でタップして）
+//   progress-menu.png    遊び方の画面（ステージの行に到達と星の合計）
+//   progress-list.png    ステージ一覧（章ごとの番号と星、次に遊ぶステージ、鍵、全部 ★3 の章の王冠）
+//   progress-replay.png  クリア済みのステージ 3 を一覧から選んで開いた直後
+//   progress-chapter-end.png    到達 10 の端末でステージ 10 をクリアした画面（章の星の合計と次の章の予告）
+//   progress-chapter-intro.png  「第2章へ」で開いたステージ 11 のお披露目（立体が回りながら出て、章の名前の帯）
+//   あわせて、遊び直しのクリアで到達が戻らず章の終わりも出ないこと、鍵のステージが押せないこと、既存の記録が残ることを確かめる
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -86,7 +93,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -382,6 +389,108 @@ async function chapterShots(context, errors, outside) {
     await page.screenshot({ path: file });
     console.log(`screenshot: ${file}`);
   }
+  await context.close();
+}
+
+async function progressShots(context, errors, outside) {
+  const page = await context.newPage();
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+  page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+  const cdp = await context.newCDPSession(page);
+  const save = async (name) => {
+    const path = join(outDir, `${name}.png`);
+    await page.screenshot({ path });
+    console.log(`screenshot: ${path}`);
+  };
+  const tapButton = async (sel) => {
+    const box = await page.locator(sel).boundingBox();
+    await tap(cdp, [box.x + box.width / 2, box.y + box.height / 2]);
+  };
+  // 記録を入れた端末: 到達 reached、1 章は全部 ★3（王冠）、11〜13 は星いろいろ、今日の1問の記録と設定も入れておく（消えないことを見る）
+  const bestsFor = () => ({
+    ...Object.fromEntries(Array.from({ length: 10 }, (_, i) => [i + 1, { stars: 3, seconds: 30 + i }])),
+    11: { stars: 2, seconds: 95 }, 12: { stars: 3, seconds: 70 }, 13: { stars: 1, seconds: 180 },
+    'daily-20261003': { stars: 2, seconds: 77 },
+  });
+  const seed = (reached, bests) => page.evaluate(([reached, bests]) => {
+    localStorage.clear();
+    localStorage.setItem('screw-puzzle-3d.stage', String(reached));
+    localStorage.setItem('screw-puzzle-3d.best', JSON.stringify(bests));
+    localStorage.setItem('screw-puzzle-3d.settings', JSON.stringify({ speed: 'fast' }));
+  }, [reached, bests]);
+  // 保存を書き換えるのは、保存しない ?level=box のページから（E10 の pagehide の保存と競らない）
+  await page.goto(url + '?level=box');
+  await seed(14, bestsFor());
+  await page.goto(url);
+  await waitRendered(page);
+  if (await page.evaluate(() => window.__app.stage) !== 14) throw new Error('到達 14 の端末がステージ 14 から始まらない');
+  await tapButton('#mode-btn');
+  await page.waitForSelector('#menu:not([hidden])');
+  const sub = await page.locator('#m-stage-sub').textContent();
+  if (sub !== 'ステージ 14 まで・★ 36') throw new Error(`遊び方の画面のステージの行が合わない: ${sub}`);
+  await page.waitForTimeout(300);
+  await save('progress-menu');
+  await tapButton('#m-stage');
+  await page.waitForSelector('#stages:not([hidden])');
+  await page.waitForTimeout(300);
+  const states = await page.evaluate(() => [...document.querySelectorAll('#st-list .st')].map((b) => b.className.replace(/^st /, '')));
+  if (states.length !== 30) throw new Error(`一覧のステージの数が合わない（1〜3 章で 30）: ${states.length}`);
+  if (states[12] !== 'cleared' || states[13] !== 'next playing' || states[14] !== 'locked' || states[29] !== 'locked') throw new Error(`一覧の状態が合わない: ${states.slice(10, 16)}`);
+  if (!await page.locator('#st-list .chap[data-chapter="1"] .crown').count()) throw new Error('全部 ★3 の 1 章に王冠が無い');
+  if (!await page.locator('#st-list .st[data-n="20"]').isDisabled()) throw new Error('鍵のステージが押せる');
+  // 一覧を上へ戻して 1 章から撮る
+  await page.evaluate(() => { document.getElementById('st-list').scrollTop = 0; });
+  await save('progress-list');
+  // 鍵のステージを押しても何も起きない
+  await page.locator('#st-list .st[data-n="20"]').scrollIntoViewIfNeeded();
+  await page.locator('#st-list .st[data-n="20"]').click({ force: true });
+  await page.waitForTimeout(200);
+  if (await page.locator('#stages').isHidden() || await page.evaluate(() => window.__app.stage) !== 14) throw new Error('鍵のステージで遊べてしまった');
+
+  // クリア済みのステージ 3 を選んで遊び直す
+  await page.locator('#st-list .st[data-n="3"]').scrollIntoViewIfNeeded();
+  await tapButton('#st-list .st[data-n="3"]');
+  await page.waitForFunction(() => window.__app.stage === 3 && window.__app.rendered, null, { timeout: SETTLE_MS });
+  await waitRendered(page);
+  const title = await page.locator('#title').textContent();
+  if (title !== 'ステージ 3') throw new Error(`遊び直しの題名が合わない: ${title}`);
+  await save('progress-replay');
+  await playSolution(page);
+  await page.waitForSelector('#overlay:not([hidden]) #next:not([hidden])');
+  if (!await page.locator('#end-chapter').isHidden()) throw new Error('遊び直しのクリアで章の終わりが出た');
+  if (await page.evaluate(() => window.__app.reached) !== 14) throw new Error('遊び直しのクリアで到達が戻った');
+  const kept = await page.evaluate(() => [localStorage.getItem('screw-puzzle-3d.stage'), JSON.parse(localStorage.getItem('screw-puzzle-3d.best')), JSON.parse(localStorage.getItem('screw-puzzle-3d.settings')).speed]);
+  if (kept[0] !== '14' || kept[1]['daily-20261003']?.stars !== 2 || kept[1][13]?.stars !== 1 || kept[2] !== 'fast') throw new Error(`既存の記録が変わった: ${JSON.stringify(kept)}`);
+  // 「次のステージへ」は遊び直しの次（4）
+  await tapButton('#next');
+  await page.waitForFunction(() => window.__app.stage === 4 && window.__app.rendered, null, { timeout: SETTLE_MS });
+
+  // 章の終わり: 到達 10 の端末でステージ 10 をクリアする
+  await page.goto(url + '?level=box');
+  const ch1 = bestsFor();
+  delete ch1[10];
+  for (const k of [11, 12, 13]) delete ch1[k];
+  await seed(10, ch1);
+  await page.goto(url);
+  await waitRendered(page);
+  if (await page.evaluate(() => window.__app.stage) !== 10) throw new Error('到達 10 の端末がステージ 10 から始まらない');
+  await playSolution(page);
+  await page.waitForSelector('#overlay:not([hidden]) #end-chapter:not([hidden])');
+  const next = await page.locator('#next').textContent();
+  if (next !== '第2章へ') throw new Error(`章の終わりの「次へ」が合わない: ${next}`);
+  const lines = await page.locator('#end-chapter span').allTextContents();
+  if (!lines[0].startsWith('第1章「はじめての工作」') || !/★ \d+ \/ 30/.test(lines[1]) || !lines[3].includes('ロボット')) throw new Error(`章の終わりの文が合わない: ${lines}`);
+  await page.waitForTimeout(1600);
+  await save('progress-chapter-end');
+  // ネジまるがもう1回跳ぶ（成功の動きが2回）
+  await page.waitForFunction(() => window.__app.mascot.history.filter((h) => h === 'win').length >= 2, null, { timeout: 8000 }).catch(() => { throw new Error('章の終わりでネジまるがもう1回跳ばない'); });
+  await tapButton('#next');
+  await page.waitForFunction(() => window.__app.stage === 11 && !window.__app.why().loading, null, { timeout: SETTLE_MS });
+  await page.waitForSelector('.ch-banner');
+  await page.waitForTimeout(500);
+  await save('progress-chapter-intro');
+  await waitRendered(page);
   await context.close();
 }
 
@@ -1301,6 +1410,7 @@ try {
   if (only('settings')) await settingsShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('resume')) await resumeShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('chapter')) await chapterShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('progress')) await progressShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);
   if (errors.length) throw new Error(`ページでエラー: ${errors.join(' / ')}`);
