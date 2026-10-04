@@ -22,11 +22,9 @@ html, body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  /* 空のグラデーション、白い丸いマット（縁はぼかす）、マットに落ちる立体の影（3D の外で描くので描く負荷が無い）。
-     マットと影の位置と大きさは main.js が立体の見かけの大きさから入れる（--mat-* / --shade-*） */
+  /* 空のグラデーション。町並み・雲・マットと影は #backdrop（F2）。どれも 3D の外で描くので描く負荷が無い */
   background:
-    radial-gradient(var(--shade-rx, 36%) var(--shade-ry, 5%) at 50% var(--shade-y, 77%), var(--shade), transparent),
-    radial-gradient(var(--mat-rx, 84%) var(--mat-ry, 14%) at 50% var(--mat-y, 82%), var(--mat) 90%, color-mix(in srgb, var(--mat) 50%, transparent) 96%, transparent 100%),
+    radial-gradient(70% 40% at 82% 6%, rgba(255, 255, 255, 0.5), transparent 70%),
     linear-gradient(var(--sky-top), var(--sky-mid) 62%, var(--sky-bottom));
   background-color: var(--sky-mid);
   color: var(--ink);
@@ -35,6 +33,84 @@ html, body {
   user-select: none;
   -webkit-tap-highlight-color: transparent;
   overscroll-behavior: none;
+}
+/* 普段の画面の背景（F2、src/backdrop.js）。奥から: 雲・遠い町並み・近い町並み・マットと影・昇る粒。盤面のキャンバスの後ろ。
+   町並みはマットの奥の地平に半分沈め、色は空の色から作る（題材の空・章の色みに付いてくる）。立体より目立たないよう、空との差は小さく。
+   動くのは transform と opacity だけ（合成だけで済み、描き直さない）。画質「軽い」と動きを減らす設定では止める */
+#backdrop {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  --horizon: calc(var(--mat-y, 82%) - var(--mat-ry, 14%) + 14px);   /* 町並みの足もと: マットの奥の縁より少し下 */
+}
+#backdrop > div { position: absolute; left: 0; right: 0; }
+.bd-town { overflow: visible; }
+.bd-town svg { display: block; will-change: transform; }
+.bd-town.far { top: calc(var(--horizon) - 72px - 20px); --c: color-mix(in srgb, var(--sky-top) 55%, #fff); fill: var(--c); stroke: var(--c); }
+/* 近い列: 板の色（theme.js の plateColors）を空の中ほどの色に溶かした、淡いおもちゃ箱の色 */
+.bd-town.near { top: calc(var(--horizon) - 96px); }
+/* （形は <symbol> の中にあり、<use> の写しには外の祖先の選び方が届かないので、symbol の中の要素で選ぶ） */
+#bd-town-near g { --c: color-mix(in srgb, var(--t) 42%, var(--sky-mid)); fill: var(--c); stroke: var(--c); }
+#bd-town-near .t1 { --t: #9ccbff; }
+#bd-town-near .t2 { --t: #ffb19c; }
+#bd-town-near .t3 { --t: #a3e2bd; }
+#bd-town-near .t4 { --t: #ffdc7a; }
+#bd-town-near .t5 { --t: #c3b4ff; }
+/* 地平から手前の床: 大きな市松のプレイマットを寝かせて、奥ほど細かく見せる（形は変わらないので一度描けば済む） */
+.bd-floor {
+  top: var(--horizon);
+  bottom: -30%;
+  left: -60%;
+  right: -60%;
+  background: repeating-conic-gradient(color-mix(in srgb, var(--sky-bottom) 70%, #fff) 0 25%, color-mix(in srgb, var(--sky-bottom) 82%, var(--sky-top)) 0 50%) 50% 0 / 72px 72px;
+  transform: perspective(300px) rotateX(58deg);
+  transform-origin: 50% 0;
+  opacity: 0.45;
+  -webkit-mask-image: linear-gradient(transparent, #000 30%);
+  mask-image: linear-gradient(transparent, #000 30%);
+}
+.bd-ground {
+  inset: 0;
+  background:
+    radial-gradient(var(--shade-rx, 36%) var(--shade-ry, 5%) at 50% var(--shade-y, 77%), var(--shade), transparent),
+    radial-gradient(var(--mat-rx, 84%) var(--mat-ry, 14%) at 50% var(--mat-y, 82%), var(--mat) 90%, color-mix(in srgb, var(--mat) 50%, transparent) 96%, transparent 100%);
+}
+/* 雲: 白い丸の固まりが、左から右へ 2〜3 分かけて流れる（始めの位置は散らしておく） */
+.bd-clouds { top: 0; bottom: 0; }
+.bd-cloud { position: absolute; left: 0; fill: #fff; opacity: 0.7; will-change: transform; animation: bd-drift linear infinite; }
+.bd-cloud.c1 { top: 15%; width: 130px; height: 56px; animation-duration: 150s; animation-delay: -40s; }
+.bd-cloud.c2 { top: 29%; width: 84px; height: 36px; opacity: 0.55; animation-duration: 210s; animation-delay: -150s; }
+.bd-cloud.c3 { top: 41%; width: 104px; height: 45px; opacity: 0.6; animation-duration: 180s; animation-delay: -105s; }
+@keyframes bd-drift { from { transform: translate3d(-160px, 0, 0); } to { transform: translate3d(calc(100vw + 20px), 0, 0); } }
+/* 昇る粒: 白い小さな玉が、少し揺れながら下から上へ。上と下では薄く */
+.bd-dots { top: 0; bottom: 0; }
+.bd-dots span {
+  position: absolute;
+  left: var(--x);
+  top: 0;
+  width: var(--s);
+  height: var(--s);
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #fff, rgba(255, 255, 255, 0.55) 60%, rgba(255, 255, 255, 0) 72%);
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: bd-rise var(--d) linear var(--delay) infinite;
+}
+@keyframes bd-rise {
+  0% { transform: translate3d(0, 102vh, 0); opacity: 0; }
+  15% { opacity: 0.8; }
+  50% { transform: translate3d(var(--sway), 50vh, 0); }
+  85% { opacity: 0.6; }
+  100% { transform: translate3d(0, -4vh, 0); opacity: 0; }
+}
+.still-bg .bd-cloud, .still-bg .bd-dots span { animation-play-state: paused; }
+/* 終わりのカードや遊び方・設定の画面、起動の画面が出ている間も止める（幕のぼかしは後ろが動くたびに掛け直すので、雨の間が重くなる） */
+body:has(#overlay:not([hidden]), #menu:not([hidden]), #stages:not([hidden]), #settings:not([hidden]), #boot:not([hidden])) :is(.bd-cloud, .bd-dots span) { animation-play-state: paused; }
+.still-bg .bd-dots { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .bd-cloud, .bd-dots span { animation-play-state: paused; }
+  .bd-dots { display: none; }
 }
 #stage {
   position: fixed;
@@ -315,6 +391,8 @@ button {
 #undo:disabled { opacity: 0.4; }
 #hint-btn svg { stroke: var(--accent); }
 #hint-btn:disabled { opacity: 0.6; }
+#other-btn .pip { fill: var(--ink); stroke: none; }
+#other-btn[hidden] { display: none; }
 #sound .mute { display: none; }
 #sound.off .wave { display: none; }
 #sound.off .mute { display: inline; }
@@ -400,7 +478,7 @@ button {
 }
 .card h2 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: 0.08em; }
 .card p { margin: 8px 0 18px; color: var(--ink-soft); font-size: 14px; }
-#again, #next, #rewind, #back1, #resume, #end-hint {
+#again, #next, #rewind, #back1, #resume, #end-hint, #end-other, #o-yes, #o-no {
   display: block;
   margin: 0 auto;
   min-width: 180px;
@@ -414,7 +492,7 @@ button {
   box-shadow: 0 4px 0 #b07c00;
 }
 #overlay.cleared h2 { color: #d08a00; }
-#next[hidden], #rewind[hidden], #back1[hidden], #resume[hidden], #end-hint[hidden] { display: none; }
+#next[hidden], #rewind[hidden], #back1[hidden], #resume[hidden], #end-hint[hidden], #end-other[hidden] { display: none; }
 #rewind:disabled, #end-hint:disabled { opacity: 0.6; }
 /* 詰み・行き止まり（E5）: 赤い文言をやめ、「戻る」と「ヒント」を大きな2つのボタンで並べる */
 #overlay.stuck h2, #overlay.deadend h2 { color: var(--ink); }
@@ -445,7 +523,7 @@ button {
 #end-help .big small { font-size: 12px; font-weight: 600; opacity: 0.8; }
 #end-hint { background: #fff4cc; color: #6b4a00; box-shadow: 0 4px 0 #e2b84a; border: 2px solid #f0c75a; }
 /* 次へがあるときの「もう一度」は控えめに */
-#again.sub, #back1.sub, #resume.sub {
+#again.sub, #back1.sub, #resume.sub, #end-other.sub {
   margin-top: 10px;
   min-height: 40px;
   background: transparent;
@@ -509,6 +587,30 @@ button {
   font-variant-numeric: tabular-nums;
 }
 #end-score .new-best { color: #d08a00; font-weight: 800; }
+
+/* 別の問題にするかの確かめ（F）: 遊び方の画面と同じ幕 */
+#other {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(29, 36, 48, 0.35);
+  z-index: 5;
+  animation: fade 0.2s ease-out;
+}
+#other[hidden] { display: none; }
+#other .card { width: min(300px, calc(100vw - 48px)); box-sizing: border-box; }
+#other h2 { font-size: 22px; margin-bottom: 10px; }
+#other p { margin: 0 0 16px; font-size: 14px; line-height: 1.6; color: var(--ink-soft); }
+#o-no.sub {
+  margin-top: 10px;
+  min-height: 40px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-soft);
+  font-size: 15px;
+  font-weight: 400;
+}
 
 /* 遊び方を選ぶ画面（D6）: ステージ・今日の1問・おまかせ 3 段 */
 #menu {
@@ -630,6 +732,10 @@ button {
   color: #3a2a00;
   box-shadow: 0 2px 0 #b07c00;
 }
+/* BGM の曲（F）: 名前が長いので、行を分けて 3 つずつ並べる */
+.s-wide { flex-direction: column; align-items: stretch; gap: 6px; }
+.seg-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
+.seg-grid button { min-width: 0; padding: 0 4px; font-size: 13px; }
 #settings .s-note { margin: -6px 0 10px; font-size: 11px; text-align: right; }
 #s-clear {
   display: block;
@@ -811,7 +917,7 @@ button {
   touch-action: none;
 }
 #boot[hidden] { display: none; }
-#boot.leaving { animation: boot-leave 0.45s ease-in forwards; pointer-events: none; }
+#boot.leaving { animation: boot-leave 0.6s ease-in forwards; pointer-events: none; }
 @keyframes boot-leave { to { opacity: 0; transform: scale(1.06); } }
 .boot-card {
   display: flex;
@@ -938,6 +1044,10 @@ button {
 #boot.title .boot-tag { opacity: 1; transition: opacity 0.3s; }
 #boot.title .boot-idle { opacity: 0; animation: none; }
 #boot.title .boot-jump { opacity: 1; animation: boot-hop 0.55s cubic-bezier(0.3, 1.6, 0.5, 1) backwards, boot-bob 1.1s 0.55s ease-in-out infinite alternate; }
+/* 読み終えた（F2、タイトルを挟まない時）: 棒が満ちたまま、ネジまるがバンザイして合言葉を出してから消える */
+#boot.greet .boot-tag { opacity: 1; transition: opacity 0.3s; }
+#boot.greet .boot-idle { opacity: 0; animation: none; }
+#boot.greet .boot-jump { opacity: 1; animation: boot-hop 0.55s cubic-bezier(0.3, 1.6, 0.5, 1) backwards; }
 @keyframes boot-hop { from { opacity: 0; transform: translateY(24px) scale(0.9); } }
 @media (prefers-reduced-motion: reduce) {
   #boot *, #boot { animation-duration: 0.01s !important; animation-iteration-count: 1 !important; }
