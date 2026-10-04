@@ -126,6 +126,18 @@ export const THEME = {
     train: ['#a3d8ff', '#eef8ec', '#f6efcf', '#f8f9f2'],   // 田舎の線路: 空色、麦色の下
     camera: ['#f3c6d6', '#fbeff3', '#fff1de', '#fbf8f8'],  // 写真館: 薄紅の幕、明るい床
   },
+  // 章ごとの色み（E8 の章の名前 → [空の上に混ぜる色, 下に混ぜる色]）。題材の空に重ねて、同じ題材でも章で空の気配が変わるようにする（E3 でつないだ）。
+  // 題材の空を塗り替えると E2 の「題材らしさ」が消えるので、混ぜるのは 3 割まで。上は空に近い色相の色だけにする
+  // （青い空に橙を混ぜると灰色に濁る）。暖かい色は下（地平の側）へ。マットは白い板が溶けないよう、ごく弱く（test/theme.test.js）
+  chapterTints: {
+    ch1: ['#7cc4ff', '#ffd59a'],   // はじめての工作: 晴れた朝、木の机の暖かさ
+    ch2: ['#6fd6c8', '#d8f0a0'],   // どうぶつとロボット: 青緑の空、若草
+    ch3: ['#4aa8ff', '#bfeaf5'],   // 空と海: 深い空色、波の白
+    ch4: ['#8a9cf0', '#ffc09a'],   // しゅっぱつ進行: 藍の夕空、夕焼け
+    ch5: ['#b9a0ff', '#ffd6e4'],   // カメラとどうぶつ: 藤色、桃色
+    ch6: ['#f59ad8', '#ffe7a0'],   // おもちゃ箱ぜんぶ: 綿あめ、レモン
+  },
+  chapterMix: [0.34, 0.12, 0.3, 0.02],   // 上・中ほど（上の色）・下・マット（下の色）に混ぜる割合
 
   // HUD
   ink: '#1d2430',
@@ -160,16 +172,25 @@ export function skyFor(name, theme = THEME) {
   return s ? { sky: s.slice(0, 3), mat: s[3] } : { sky: theme.sky, mat: theme.mat };
 }
 
-// 背景の CSS 変数（盤面が変わるたびに main.js が入れ直す）
-export function skyVariables(name, theme = THEME) {
+// 2 つの色（#rrggbb）を t の割合で混ぜる（sRGB のまま）
+export function mixHex(a, b, t) {
+  const ch = (h, i) => Number.parseInt(h.slice(1 + i * 2, 3 + i * 2), 16);
+  return '#' + [0, 1, 2].map((i) => Math.round(ch(a, i) + (ch(b, i) - ch(a, i)) * t).toString(16).padStart(2, '0')).join('');
+}
+
+// 背景の CSS 変数（盤面が変わるたびに main.js が入れ直す）。
+// name は盤面の種類（level.meta.kind）、chapter は章の空の名前（level.meta.sky、'ch1'〜。無ければ題材の空のまま）
+export function skyVariables(name, chapter = null, theme = THEME) {
   const { sky, mat } = skyFor(name, theme);
-  return { '--sky-top': sky[0], '--sky-mid': sky[1], '--sky-bottom': sky[2], '--mat': mat };
+  const tint = theme.chapterTints?.[chapter];
+  const [top, mid, bottom, m] = tint ? [...sky, mat].map((c, i) => mixHex(c, tint[i < 2 ? 0 : 1], theme.chapterMix[i])) : [...sky, mat];
+  return { '--sky-top': top, '--sky-mid': mid, '--sky-bottom': bottom, '--mat': m };
 }
 
 // HUD の CSS 変数（style.css が使う）
 export function cssVariables(theme = THEME) {
   const vars = {
-    ...skyVariables(null, theme),
+    ...skyVariables(null, null, theme),
     '--shade': theme.shade,
     '--ink': theme.ink,
     '--ink-soft': theme.inkSoft,

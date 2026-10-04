@@ -31,4 +31,28 @@ describe('Android 版', () => {
     expect(css).not.toMatch(/(?<!, )env\(safe-area-inset/);
     for (const side of ['top', 'right', 'bottom']) expect(css).toContain(`var(--safe-area-inset-${side}, env(safe-area-inset-${side}, 0px))`);
   });
+
+  it('アイコンとスプラッシュはネジまるの絵（E3）: 適応アイコンは空のグラデーションの背景と、密度ごとの前景', () => {
+    for (const f of ['ic_launcher', 'ic_launcher_round']) {
+      const xml = read(`android/app/src/main/res/mipmap-anydpi-v26/${f}.xml`);
+      expect(xml).toContain('@drawable/ic_launcher_background');
+      expect(xml).toContain('@mipmap/ic_launcher_foreground');
+    }
+    expect(read('android/app/src/main/res/drawable/ic_launcher_background.xml')).toContain('<gradient');
+    // PNG の幅と高さ（IHDR）
+    const size = (p) => {
+      const b = readFileSync(new URL(`../android/app/src/main/res/${p}`, import.meta.url));
+      return [b.readUInt32BE(16), b.readUInt32BE(20)];
+    };
+    for (const [d, s] of Object.entries({ mdpi: 1, hdpi: 1.5, xhdpi: 2, xxhdpi: 3, xxxhdpi: 4 })) {
+      expect(size(`mipmap-${d}/ic_launcher_foreground.png`)).toEqual([108 * s, 108 * s]);
+      expect(size(`mipmap-${d}/ic_launcher.png`)).toEqual([48 * s, 48 * s]);
+      expect(size(`mipmap-${d}/ic_launcher_round.png`)).toEqual([48 * s, 48 * s]);
+    }
+    const styles = read('android/app/src/main/res/values/styles.xml');
+    expect(styles).toContain('windowSplashScreenBackground');
+    expect(styles).toContain('postSplashScreenTheme');
+    // 起動の色は Web の起動の画面（空）と同じ
+    expect(config.backgroundColor).toBe('#e6f4ff');
+  });
 });

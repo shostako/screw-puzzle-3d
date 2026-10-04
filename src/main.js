@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createBoot, wantsTitle } from './boot.js';
 import { createGesture } from './gesture.js';
 import { dragRotation, zoomDistance, radPerPx, fitRegion, fitDistance, fitPoints, spreadPx, focalPx, ZOOM_RANGE, createInertia } from './view.js';
 import { buildBoard, setKnurl, setContact, setDrives, driveIcon } from './scene.js';
@@ -21,6 +22,9 @@ import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, MAX_RANDOM, isRa
 import { rate, clock, createPlayClock, createBests, MAX_STARS } from './rating.js';
 import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
 import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf } from './effects.js';
+
+// 起動の画面（E3）。物理の wasm を読む fetch を見張るので、物理の準備（start）より先に作る
+const boot = createBoot();
 
 // 既定はステージの進行（到達したステージから始める）。題名を押すと遊び方を選ぶ画面（ステージ・今日の1問・おまかせ）が出る。
 // ?seed=番号（と &kind=box|shelf|table|car|house|animal）なら生成した盤面を1つだけ遊ぶ（進行は保存しない）。
@@ -996,7 +1000,7 @@ function pickMode(next) {
   return loadMode(next);
 }
 // 遊び方・ステージ一覧・設定のどれかが開いているか（開いている間は遊んだ時間を数えない）
-const screenOpen = () => !$('menu').hidden || !$('stages').hidden || !$('settings').hidden;
+const screenOpen = () => boot.open || !$('menu').hidden || !$('stages').hidden || !$('settings').hidden;
 
 // ---- ステージ一覧（E9）: 遊び方の画面の「ステージ」から。章ごとにステージの番号と自己ベストの星を並べる ----
 // クリア済みのステージは選んで遊び直せる（到達は戻らない。progress.cleared は先へしか進めない）。まだのステージは鍵
@@ -1087,8 +1091,11 @@ function rebuildBoard() {
   }
   board = buildBoard(LEVEL, { knurl: quality().knurl, contact: quality().contact, drives: settings.get('drives') });
   model.add(board.root);
-  // 空とマットの色は盤面の種類で変える（E2。theme.js の skies）
-  for (const [name, value] of Object.entries(skyVariables(LEVEL.meta?.kind))) rootStyle.setProperty(name, value);
+  // 空とマットの色は盤面の種類で変え、ステージなら章の色みを重ねる（E2・E3。theme.js の skies と chapterTints）
+  const sky = skyVariables(LEVEL.meta?.kind, LEVEL.meta?.sky);
+  for (const [name, value] of Object.entries(sky)) rootStyle.setProperty(name, value);
+  // ブラウザの上の帯（theme-color）も空の上の色に合わせる
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', sky['--sky-top']);
   stepClock = 0;
 }
 
@@ -1593,14 +1600,27 @@ let wasMoving = false;
 
 async function start() {
   await initPhysics();
+  boot.step('physics');
   started = true;
   const record = pending;
+  // 初めて開いた端末ならタイトルを挟む（E3）。続きの局面があれば、ここで消える前に見ておく
+  const title = wantsTitle({ query, webdriver: navigator.webdriver, reached: progress.stage, resuming: !!record, chosen: freePlay || askedByUrl });
   restart();
   pending = null;
   if (record) resumeFrom(record);
   saveResume();
   resize();
   wake();
+  // 最初の盤面を描いてから起動の画面を閉じる（タイトルなら「はじめる」を待つ。その間は遊んだ時間を数えない）
+  if (title) playClock.pause();
+  requestAnimationFrame(() => requestAnimationFrame(() => boot.ready({
+    title,
+    onStart() {
+      feedback.unlock?.();
+      playClock.reset();
+      if (!document.hidden) playClock.resume();
+    },
+  })));
 }
 start();
 
@@ -1620,9 +1640,10 @@ window.__app = {
   get pixelRatio() { return renderer.getPixelRatio(); },
   get mascotDrawing() { return mascot.enabled; },
   loadMode,
-  get rendered() { return !loading && !needsRender && !tweens.size && !playing && !physics?.moving() && !inertia.active; },
+  get booting() { return boot.open; },
+  get rendered() { return !boot.busy && !loading && !needsRender && !tweens.size && !playing && !physics?.moving() && !inertia.active; },
   // rendered が false の理由（スクリーンショットのスクリプトが待ちきれなかったとき用）
-  why: () => ({ loading, needsRender, tweens: tweens.size, playing, moving: physics?.moving(), modes: window.__app.plateModes() }),
+  why: () => ({ boot: boot.busy, loading, needsRender, tweens: tweens.size, playing, moving: physics?.moving(), modes: window.__app.plateModes() }),
   // 立体の向きを Euler で直接決める（スクリーンショットで同じ向きから撮るため）
   // k は寄り引きの比（1 で空きに収まった距離）
   view(x, y, z, k = zoomK) {

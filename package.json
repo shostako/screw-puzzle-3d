@@ -11,7 +11,8 @@
     "screenshot": "node scripts/screenshot.mjs",
     "app:web": "bash scripts/build_app.sh",
     "app:apk": "bash scripts/build_app.sh && cd android && ./gradlew assembleDebug",
-    "app:offline": "node scripts/offline-check.mjs"
+    "app:offline": "node scripts/offline-check.mjs",
+    "font": "node scripts/font.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-deterministic-compat": "^0.21.0",
@@ -22,6 +23,7 @@
     "@capacitor/cli": "8.5.2",
     "@capacitor/core": "8.5.2",
     "playwright-core": "^1.63.0",
+    "subset-font": "^2.9.0",
     "vite": "^8.3.2",
     "vitest": "^5.0.3"
   }
