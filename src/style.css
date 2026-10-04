@@ -886,3 +886,112 @@ button {
 @media (prefers-reduced-motion: reduce) {
   #boot *, #boot { animation-duration: 0.01s !important; animation-iteration-count: 1 !important; }
 }
+
+/* 初めての導入（E4）: 左下のネジまるの吹き出しと、手本の半透明の手。どちらも盤面のタップを遮らない */
+#coach {
+  position: fixed;
+  left: calc(var(--safe-area-inset-left, env(safe-area-inset-left, 0px)) + 12px);
+  bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 140px);
+  width: max-content;
+  /* 右下のボタン列（48px と余白）にかからない幅 */
+  max-width: min(320px, calc(100vw - 12px - 76px - var(--safe-area-inset-right, env(safe-area-inset-right, 0px))));
+  box-sizing: border-box;
+  margin: 0;
+  padding: 9px 14px 10px;
+  border-radius: 16px 16px 16px 16px;
+  background: #fff;
+  box-shadow: var(--lift);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
+  word-break: auto-phrase;   /* 文節の切れ目で折り返す */
+  text-wrap: pretty;
+  pointer-events: none;
+  z-index: 4;
+  transform-origin: 46px 100%;
+  animation: coach-in 0.35s cubic-bezier(0.3, 1.5, 0.5, 1) backwards;
+}
+#coach[hidden] { display: none; }
+/* しっぽは下のネジまるの頭へ */
+#coach::after {
+  content: "";
+  position: absolute;
+  left: 40px;
+  bottom: -9px;
+  border: 8px solid transparent;
+  border-top: 10px solid #fff;
+  border-bottom: 0;
+}
+#coach.leaving { animation: coach-out 0.2s ease-in forwards; }
+.no-mascot #coach { bottom: calc(var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)) + 24px); }
+.no-mascot #coach::after { display: none; }
+@keyframes coach-in { from { opacity: 0; transform: scale(0.6); } }
+@keyframes coach-out { to { opacity: 0; transform: scale(0.85); } }
+
+/* 手本の手: 指先（SVG の 17,3）を --x / --y に合わせる */
+#coach-hand {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 48px;
+  height: 56px;
+  translate: calc(var(--x, -100px) - 17px) calc(var(--y, -100px) - 3px);
+  pointer-events: none;
+  z-index: 3;
+  filter: drop-shadow(0 3px 4px rgba(29, 36, 48, 0.25));
+}
+#coach-hand[hidden] { display: none; }
+#coach-hand svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform-origin: 17px 3px;
+}
+#coach-hand path { fill: rgba(255, 255, 255, 0.82); stroke: var(--ink); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+#coach-hand .crease { fill: none; stroke-width: 1.6; opacity: 0.6; }
+#coach-hand .ripple {
+  position: absolute;
+  left: 17px;
+  top: 3px;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border: 3px solid rgba(255, 255, 255, 0.95);
+  border-radius: 50%;
+  box-sizing: border-box;
+  opacity: 0;
+}
+/* タップ: 指が近づいて押し、白い輪が広がる */
+#coach-hand.tap svg { animation: hand-tap 1.4s ease-in-out infinite; }
+#coach-hand.tap .ripple { animation: hand-ripple 1.4s ease-out infinite; }
+@keyframes hand-tap {
+  0%, 100% { transform: translate(10px, 22px) scale(1); }
+  40% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(0, 0) scale(0.88); }
+  62% { transform: translate(0, 0) scale(1); }
+}
+@keyframes hand-ripple {
+  0%, 46% { opacity: 0; scale: 0.3; }
+  52% { opacity: 1; scale: 0.4; }
+  100% { opacity: 0; scale: 1.5; }
+}
+/* なぞる: 指を置いて横へ動かし、離して戻る */
+#coach-hand.swipe svg { animation: hand-swipe 2s ease-in-out infinite; }
+@keyframes hand-swipe {
+  0% { transform: translate(70px, 0) scale(1); opacity: 0; }
+  12% { transform: translate(70px, 0) scale(1); opacity: 1; }
+  20% { transform: translate(70px, 0) scale(0.9); }
+  70% { transform: translate(-70px, -14px) scale(0.9); opacity: 1; }
+  82%, 100% { transform: translate(-70px, -14px) scale(1); opacity: 0; }
+}
+/* 指す: 指先で小さく突く */
+#coach-hand.point svg { animation: hand-point 1s ease-in-out infinite alternate; }
+@keyframes hand-point {
+  from { transform: translate(0, 4px); }
+  to { transform: translate(0, 16px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #coach-hand svg, #coach-hand .ripple { animation-duration: 0.01s !important; animation-iteration-count: 1 !important; }
+}

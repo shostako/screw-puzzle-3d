@@ -22,6 +22,7 @@ import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, MAX_RANDOM, isRa
 import { rate, clock, createPlayClock, createBests, MAX_STARS } from './rating.js';
 import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
 import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf } from './effects.js';
+import { TIPS, MIN_MS, MAX_MS, TURN_RAD, startTips, tapTips, labelScrews, createTutorialStore, tutorialEnabled } from './tutorial.js';
 
 // 起動の画面（E3）。物理の wasm を読む fetch を見張るので、物理の準備（start）より先に作る
 const boot = createBoot();
@@ -262,9 +263,9 @@ const turn = new THREE.Quaternion();
 function rotateBy(dx, dy) {
   homing = null;
   revealing = null;
-  if (dx || dy) dismissIdleHint();
   const { axis: a, angle } = dragRotation(dx, dy, radPerPx(window.innerWidth, window.innerHeight) * SPEEDS[settings.get('speed')].k);
   if (angle === 0) return;
+  coachTurned(angle);
   // カメラから見た軸で回す（いまの向きに関係なく、指の方向へ回る）
   turn.setFromAxisAngle(axis.set(a[0], a[1], a[2]), angle);
   model.quaternion.premultiply(turn);
@@ -547,28 +548,18 @@ function sparkle(el) {
 }
 
 let flashTimer = 0;
-// 案内の行（#hint）は、文がある時だけ出る（E1）。遊び方の一言は盤面を開いた時だけ出し、回すかタップしたら消す
-const IDLE_HINT = '1本指で回す・ねじをタップで外す';
-let idleHint = IDLE_HINT;
+// 案内の行（#hint）は、文がある時だけ出る（E1）。遊び方の一言（「1本指で回す・ねじをタップで外す」）は、
+// ステージ 1 の導入（E4。ネジまるの吹き出しと手本の手）に移したので、ふだんは何も出さない
 function say(text, warn = false, ms = 1200) {
   hint.textContent = text;
   hint.classList.toggle('flash', warn);
   clearTimeout(flashTimer);
-  flashTimer = setTimeout(() => {
-    hint.textContent = idleHint;
-    hint.classList.remove('flash');
-  }, ms);
+  flashTimer = setTimeout(clearHint, ms);
 }
-function showIdleHint() {
+function clearHint() {
   clearTimeout(flashTimer);
-  idleHint = IDLE_HINT;
-  hint.textContent = idleHint;
+  hint.textContent = '';
   hint.classList.remove('flash');
-}
-function dismissIdleHint() {
-  if (!idleHint) return;
-  idleHint = '';
-  if (hint.textContent === IDLE_HINT) hint.textContent = '';
 }
 
 // ---- 1局 ----
@@ -667,6 +658,7 @@ function tapScrew(id) {
   const obj = board.screws.get(id);
   const r = game.tap(id);
   cue(tapCue(r.reason));
+  coachAfterTap(r);
   if (r.reason === 'blocked') {
     shake(obj);
     const by = movableBlockers(id);
@@ -775,6 +767,7 @@ function showHint() {
 }
 
 function showEnd(status) {
+  hideCoach();
   const ov = $('overlay');
   ov.className = status;
   const cleared = status === 'cleared';
@@ -960,11 +953,12 @@ async function loadMode(next) {
   model.quaternion.setFromEuler(START_VIEW);
   zoomK = 1;
   restart();
-  showIdleHint();
+  clearHint();
   loading = false;
   if (intro && chapterOf(stage).first === stage) revealChapter(intro);
   showUndo();
   saveResume();
+  offerStartTips();
 }
 
 // クリアの画面の「次へ」
@@ -1081,6 +1075,7 @@ function playStage(n) {
 function rebuildBoard() {
   generation++;
   clearHintRing();
+  hideCoach();
   queue = [];
   playing = false;
   for (const t of tweens) tweens.delete(t);
@@ -1276,6 +1271,7 @@ async function rewindToSolvable() {
 // このゲームの詰み（スロットが満杯で、出ている箱の色のねじが全部、動かない板に隠れている）はめったに起きないので、
 // 戻る先へ案内する入口はここが主になる
 function showDeadEnd() {
+  offerTips(['rescue']);
   if (!game.canUndo) {
     say('ここから解ける手順が見つからない。やり直そう', true, 3000);
     return;
@@ -1358,7 +1354,7 @@ function handle(events, t) {
       pinched = true;
       zoomBy(e.scale);
     } else if (e.type === 'tap') {
-      dismissIdleHint();
+      coachTapped();
       if (!caught) onTap(e.x, e.y);
     }
   }
@@ -1428,6 +1424,134 @@ function seatMascot(onCard) {
   if (onCard) $('overlay').querySelector('.card').prepend(c);
   else document.body.insertBefore(c, $('flyers'));
 }
+// ---- 初めての導入（E4） ----
+// 何をいつ出すかは tutorial.js が決め、ここはネジまるの吹き出し（#coach）と手本の手（#coach-hand）を出し入れする。
+// 導入は1つずつ出し、重なったら順に待たせる。出した導入は覚えて二度と出さない（記録を消すと、また出る）
+const tutorial = createTutorialStore(deviceStorage());
+const tutorialOn = tutorialEnabled({ query, webdriver: navigator.webdriver, freePlay });
+const coachEl = $('coach');
+const handEl = $('coach-hand');
+let coachTip = null;    // 今出している導入 { id, shownAt, turned（回した角度）, screw（手を置くねじ） }
+let coachQueue = [];    // 出す順を待っている導入の名前
+let coachTimer = 0;
+let coachLater = 0;
+
+// 導入を出す（まだ見せていないものだけ）。delay ミリ秒後に出す（ねじが飛ぶ演出などを先に見せる）
+function offerTips(ids, delay = 0) {
+  if (!tutorialOn || !ids.length) return;
+  for (const id of tutorial.fresh(ids)) if (!coachQueue.includes(id) && coachTip?.id !== id) coachQueue.push(id);
+  if (coachTip || !coachQueue.length) return;
+  clearTimeout(coachLater);
+  coachLater = setTimeout(nextTip, delay);
+}
+function offerStartTips() {
+  offerTips(startTips({ mode, stage, level: LEVEL }), 500);
+}
+
+function nextTip() {
+  if (coachTip) return;
+  // 終わりの画面や遊び方の画面が開いている間は出さない（閉じた後の合図で出す）
+  if (!$('overlay').hidden || screenOpen() || loading) return;
+  const id = coachQueue.shift();
+  if (!id) return;
+  if (tutorial.has(id)) return nextTip();
+  tutorial.mark(id);
+  coachTip = { id, shownAt: performance.now(), turned: 0, screw: null };
+  coachEl.textContent = TIPS[id].text;
+  coachEl.classList.remove('leaving');
+  coachEl.hidden = false;
+  placeHand();
+  if (mascot.enabled) mascot.play('joy');   // ネジまるが手を上げて知らせる
+  clearTimeout(coachTimer);
+  if (TIPS[id].until === 'any') coachTimer = setTimeout(endTip, MAX_MS);
+  requestRender();
+}
+
+// 今の導入を閉じて、待っている次の導入へ
+function endTip() {
+  if (!coachTip) return;
+  clearTimeout(coachTimer);
+  coachTip = null;
+  handEl.hidden = true;
+  coachEl.classList.add('leaving');
+  coachLater = setTimeout(() => {
+    if (!coachTip) coachEl.hidden = true;
+    coachEl.classList.remove('leaving');
+    nextTip();
+  }, 220);
+}
+
+// 盤面を作り直す・終わりの画面を出す時は、出している導入も待っている導入も片付ける
+function hideCoach() {
+  clearTimeout(coachTimer);
+  clearTimeout(coachLater);
+  coachTip = null;
+  coachQueue = [];
+  coachEl.hidden = true;
+  coachEl.classList.remove('leaving');
+  handEl.hidden = true;
+}
+
+const tipAge = () => performance.now() - coachTip.shownAt;
+// 画面をタップした（ねじに当たったかに関係なく）。'any' の導入は読む間を置いてから閉じる
+function coachTapped() {
+  if (coachTip && TIPS[coachTip.id].until === 'any' && tipAge() >= MIN_MS) endTip();
+}
+// 立体を回した。'turn' の導入は、十分に回したら閉じる
+function coachTurned(angle) {
+  if (coachTip?.id && TIPS[coachTip.id].until === 'turn' && (coachTip.turned += Math.abs(angle)) >= TURN_RAD) endTip();
+}
+// ねじをタップした結果から、閉じる導入と次に出す導入を決める
+function coachAfterTap(r) {
+  if (!tutorialOn) return;
+  if (r.reason === 'ok' && coachTip && TIPS[coachTip.id].until === 'tap') endTip();
+  const stage1 = mode.type === 'stage' && stage === 1;
+  const visibleLegal = stage1 && r.reason === 'ok' && !tutorial.has('turn') ? visibleLegalScrews().length : null;
+  offerTips(tapTips({
+    reason: r.reason,
+    events: r.events,
+    slotsFree: game.state.slots.filter((x) => x === null).length,
+    visibleLegal,
+    stage: mode.type === 'stage' ? stage : null,
+    status: r.status ?? game.status,
+  }), r.reason === 'ok' ? 700 : 300);
+}
+
+// 今の向きで見えている、外せるねじ
+function visibleLegalScrews() {
+  const legal = new Set(game.legal());
+  return visibleScrews().filter((s) => legal.has(s.id));
+}
+
+// 手本の手を、導入が指す所へ置く（立体のねじを指すときは、回すたびに付いていく）
+function placeHand() {
+  const tip = TIPS[coachTip.id];
+  let at = null;
+  if (tip.at === 'screw' || tip.at === 'label') {
+    const seen = visibleLegalScrews();
+    const ids = seen.map((s) => s.id);
+    const ok = tip.at === 'label' ? labelScrews(LEVEL, ids) : ids;
+    if (!ok.includes(coachTip.screw)) coachTip.screw = ok[0] ?? null;
+    if (coachTip.screw) at = screenOf(board.screws.get(coachTip.screw));
+  } else if (tip.at === 'board' && region) {
+    at = [region.x, region.y + 40];
+  } else if (tip.at === 'slots') {
+    const r = slotsEl.getBoundingClientRect();
+    at = [r.left + r.width / 2, r.bottom - 4];
+  } else if (tip.at === 'tools') {
+    const r = $('hint-btn').getBoundingClientRect();
+    at = [r.left + r.width / 2, r.bottom - 6];
+  }
+  if (!tip.hand || !at) {
+    handEl.hidden = true;
+    return;
+  }
+  handEl.className = tip.hand;
+  handEl.style.setProperty('--x', `${at[0].toFixed(1)}px`);
+  handEl.style.setProperty('--y', `${at[1].toFixed(1)}px`);
+  handEl.hidden = false;
+}
+
 // 右下の音のボタン: 音だけを入り切りする（振動は設定の画面で）
 const soundButton = $('sound');
 function showSound() {
@@ -1536,6 +1660,7 @@ $('rewind').addEventListener('click', rewindToSolvable);
 $('resume').addEventListener('click', () => {
   $('overlay').hidden = true;
   showUndo();
+  nextTip();   // 行き止まりで待たせていた導入（ヒントと戻る）
 });
 
 // ---- 物理を進める ----
@@ -1586,6 +1711,7 @@ function frame(now) {
   if (needsRender) {
     needsRender = false;
     renderer.render(scene, camera);
+    if (coachTip) placeHand();
     watchFrameTime(now, lastDraw);
     lastDraw = now;
   }
@@ -1619,8 +1745,10 @@ async function start() {
       feedback.unlock?.();
       playClock.reset();
       if (!document.hidden) playClock.resume();
+      offerStartTips();
     },
   })));
+  if (!title) offerStartTips();
 }
 start();
 
@@ -1641,6 +1769,9 @@ window.__app = {
   get mascotDrawing() { return mascot.enabled; },
   loadMode,
   get booting() { return boot.open; },
+  // 初めての導入（E4）: 今出している導入の名前（無ければ null）と、見せた導入の一覧
+  get tip() { return coachTip?.id ?? null; },
+  get tipsSeen() { return tutorial.seen; },
   get rendered() { return !boot.busy && !loading && !needsRender && !tweens.size && !playing && !physics?.moving() && !inertia.active; },
   // rendered が false の理由（スクリーンショットのスクリプトが待ちきれなかったとき用）
   why: () => ({ boot: boot.busy, loading, needsRender, tweens: tweens.size, playing, moving: physics?.moving(), modes: window.__app.plateModes() }),
