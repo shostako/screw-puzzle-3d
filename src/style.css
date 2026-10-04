@@ -242,12 +242,26 @@ button {
   box-shadow: 0 2px 0 rgba(0, 0, 0, 0.18);
   z-index: 1;
 }
+
+/* 案内の行は、文がある時だけ待機スロットの下に札で重ねて出す（E1）。HUD の高さに入れないので、立体の空きを削らない */
 #hint {
-  margin: 8px 0 0;
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 28px);
+  box-sizing: border-box;
+  margin: 2px 0 0;
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: var(--panel);
   font-size: 13px;
+  line-height: 1.4;
+  width: max-content;
   color: var(--ink-soft);
-  transition: color 0.2s;
+  transition: color 0.2s, opacity 0.25s;
 }
+#hint:empty { opacity: 0; }
 #hint.flash { color: #d2452f; }
 
 /* 画面の右下（親指の届く所）: ヒント・向きを戻す・音と振動 */

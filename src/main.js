@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { createGesture } from './gesture.js';
-import { dragRotation, zoomDistance, radPerPx } from './view.js';
+import { dragRotation, zoomDistance, radPerPx, fitRegion, fitDistance, fitPoints, spreadPx, focalPx, ZOOM_RANGE, createInertia } from './view.js';
 import { buildBoard, setKnurl, setContact, setDrives, driveIcon } from './scene.js';
 import { THEME, cssVariables, skyVariables } from './theme.js';
 import { bakeEnvironment } from './env.js';
@@ -122,10 +122,11 @@ function watchFrameTime(now, last) {
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 200);
-// 盤面（外寸 6 の箱）が縦画面の横幅に収まる距離
-const ZOOM = { min: 12, max: 34 };
-const START_DISTANCE = 19;
-let distance = START_DISTANCE;
+// カメラの距離は盤面ごとに決める（E1）。立体を包む球が、HUD と右下のボタン列の間の空きにちょうど収まる距離（fitDist）に、
+// ピンチの寄り引きの比（zoomK、1 で収まった状態）を掛ける。盤面が変わる・画面の大きさが変わるたびに fitDist を測り直す
+let fitDist = 19;
+let zoomK = 1;
+let distance = fitDist;
 camera.position.set(0, 0, distance);
 
 // 光: 半球光・主光・縁の光（theme.js）。影は描かない
@@ -165,18 +166,34 @@ function wake() {
   requestAnimationFrame(frame);
 }
 
-// HUD の高さの分、立体を画面の下寄りに描く
-let hudOffset = 0;
+// 縦長の画面では、横の画角がこの角度になるよう縦の画角を決める（横の画角が広いほど遠近が強く、端の板がゆがむ）
+const PORTRAIT_HFOV = 28;
 function resize() {
   const w = window.innerWidth;
   const h = window.innerHeight;
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
-  // 縦長の画面では横幅に合わせて立体が収まるよう、縦の画角を広げる
-  camera.fov = w < h ? 40 * Math.min(1.6, h / w / 1.2) : 40;
-  hudOffset = $('hud').getBoundingClientRect().height;
-  camera.setViewOffset(w, h, 0, -hudOffset * 0.3, w, h);
+  camera.fov = w < h ? (2 * Math.atan(Math.tan((PORTRAIT_HFOV * Math.PI) / 360) * (h / w)) * 180) / Math.PI : 40;
+  frameBoard();
+}
+
+// 立体を置く空き: HUD の下端から、右下のボタン列の上端まで。立体の中心（原点）をその真ん中に描く
+let region = null;
+function frameBoard() {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  region = fitRegion(w, h, $('hud').getBoundingClientRect().bottom + 6, $('tools').getBoundingClientRect().top - 6);
+  camera.setViewOffset(w, h, w / 2 - region.x, h / 2 - region.y, w, h);
   camera.updateProjectionMatrix();
+  // 最初の向きの立体が空きの FIT_FILL に収まる距離。ただし、どの向きでも大きくはみ出さないよう、包む球でも下限を決める
+  fitDist = Math.max(fitPoints(boardPoints, region, h, camera.fov), fitDistance(boardRadius, region, h, camera.fov));
+  // マットと影の大きさの元: 収めた距離で見た立体の広がりを、原点の深さの長さに直したもの
+  groundRadius = (spreadPx(boardPoints, fitDist, h, camera.fov) * fitDist) / focalPx(h, camera.fov);
+  setDistance();
+}
+function setDistance() {
+  distance = fitDist * zoomK;
+  camera.position.set(0, 0, distance);
   placeGround();
   requestRender();
 }
@@ -184,11 +201,47 @@ function resize() {
 // マットと影（CSS の背景）を立体の真下に置く。立体を包む球の見かけの大きさで決めるので、寄り引きと盤面の大きさに付いてくる。
 // 回したときは動かさない（球は回しても同じ。背景を毎フレーム描き直さない）
 let boardRadius = 5;
+let groundRadius = 4;
+// 盤面の形を測る（盤面を作り直すたび）。点は盤面の頂点（ねじは1本ごとの外接の箱の隅）を、最初の向きに回したもの。
+// radius は原点（回す中心）を中心に盤面を包む球の半径。どちらも立体の向きに関係なく、盤面の座標で測る
+let boardPoints = new Float32Array(0);
+function measureBoard(root) {
+  model.updateWorldMatrix(true, true);
+  const toModel = model.matrixWorld.clone().invert();
+  const startQ = new THREE.Quaternion().setFromEuler(START_VIEW);
+  const m = new THREE.Matrix4(), im = new THREE.Matrix4(), v = new THREE.Vector3();
+  const out = [];
+  let r = 0;
+  const put = (mat, x, y, z) => {
+    v.set(x, y, z).applyMatrix4(mat);
+    r = Math.max(r, v.length());
+    v.applyQuaternion(startQ);
+    out.push(v.x, v.y, v.z);
+  };
+  root.traverse((o) => {
+    if (!o.isMesh) return;
+    m.multiplyMatrices(toModel, o.matrixWorld);
+    if (o.isInstancedMesh) {
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      const { min, max } = o.geometry.boundingBox;
+      for (let i = 0; i < o.count; i++) {
+        o.getMatrixAt(i, im);
+        im.premultiply(m);
+        for (const x of [min.x, max.x]) for (const y of [min.y, max.y]) for (const z of [min.z, max.z]) put(im, x, y, z);
+      }
+    } else {
+      const pos = o.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) put(m, pos.getX(i), pos.getY(i), pos.getZ(i));
+    }
+  });
+  boardPoints = new Float32Array(out);
+  return r || 5;
+}
 const rootStyle = document.documentElement.style;
 function placeGround() {
   camera.updateMatrixWorld();
   const c = screenOfPoint(new THREE.Vector3(0, 0, 0));
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(boardRadius);
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).multiplyScalar(groundRadius);
   const R = Math.hypot(...screenOfPoint(right).map((v, i) => v - c[i]));
   const g = groundOf(c[1], R);
   rootStyle.setProperty('--mat-y', `${g.matY.toFixed(1)}px`);
@@ -205,6 +258,7 @@ const turn = new THREE.Quaternion();
 function rotateBy(dx, dy) {
   homing = null;
   revealing = null;
+  if (dx || dy) dismissIdleHint();
   const { axis: a, angle } = dragRotation(dx, dy, radPerPx(window.innerWidth, window.innerHeight) * SPEEDS[settings.get('speed')].k);
   if (angle === 0) return;
   // カメラから見た軸で回す（いまの向きに関係なく、指の方向へ回る）
@@ -214,24 +268,37 @@ function rotateBy(dx, dy) {
 }
 
 function zoomBy(scale) {
-  distance = zoomDistance(distance, scale, ZOOM.min, ZOOM.max);
-  camera.position.set(0, 0, distance);
-  placeGround();
-  requestRender();
+  zoomK = zoomDistance(zoomK, scale, ZOOM_RANGE.min, ZOOM_RANGE.max);
+  setDistance();
+}
+
+// 慣性（E1）: 指を離したときの速さで回り続け、なめらかに止まる。進めるのは frame()
+const inertia = createInertia();
+let lastSpin = 0;
+function spinStep(now) {
+  if (!inertia.active) return;
+  const m = inertia.step(lastSpin ? now - lastSpin : 16);
+  lastSpin = now;
+  if (m) rotateBy(m.dx, m.dy);
+  if (!inertia.active) lastSpin = 0;
+}
+function stopSpin() {
+  lastSpin = 0;
+  return inertia.stop();
 }
 
 // 向きと距離を最初に戻す（見失ったとき用のボタン）。0.35 秒かけて回して戻す
 let homing = null;
 function goHome() {
+  stopSpin();
   const from = model.quaternion.clone(), to = new THREE.Quaternion().setFromEuler(START_VIEW);
-  const d0 = distance;
+  const k0 = zoomK;
   const t = tween(350, (k) => {
     if (homing !== t) return;
     const e = k * k * (3 - 2 * k);
     model.quaternion.slerpQuaternions(from, to, e);
-    distance = d0 + (START_DISTANCE - d0) * e;
-    camera.position.set(0, 0, distance);
-    placeGround();
+    zoomK = k0 + (1 - k0) * e;
+    setDistance();
   });
   homing = t;
 }
@@ -476,14 +543,28 @@ function sparkle(el) {
 }
 
 let flashTimer = 0;
+// 案内の行（#hint）は、文がある時だけ出る（E1）。遊び方の一言は盤面を開いた時だけ出し、回すかタップしたら消す
+const IDLE_HINT = '1本指で回す・ねじをタップで外す';
+let idleHint = IDLE_HINT;
 function say(text, warn = false, ms = 1200) {
   hint.textContent = text;
   hint.classList.toggle('flash', warn);
   clearTimeout(flashTimer);
   flashTimer = setTimeout(() => {
-    hint.textContent = '1本指で回す・ねじをタップで外す';
+    hint.textContent = idleHint;
     hint.classList.remove('flash');
   }, ms);
+}
+function showIdleHint() {
+  clearTimeout(flashTimer);
+  idleHint = IDLE_HINT;
+  hint.textContent = idleHint;
+  hint.classList.remove('flash');
+}
+function dismissIdleHint() {
+  if (!idleHint) return;
+  idleHint = '';
+  if (hint.textContent === IDLE_HINT) hint.textContent = '';
 }
 
 // ---- 1局 ----
@@ -871,10 +952,11 @@ async function loadMode(next) {
   levelSig = null;
   newGameFor(LEVEL);
   homing = null;
+  stopSpin();
   model.quaternion.setFromEuler(START_VIEW);
-  zoomBy(distance / START_DISTANCE);
+  zoomK = 1;
   restart();
-  hint.textContent = '1本指で回す・ねじをタップで外す';
+  showIdleHint();
   loading = false;
   if (intro && chapterOf(stage).first === stage) revealChapter(intro);
   showUndo();
@@ -1012,8 +1094,8 @@ function rebuildBoard() {
 
 function restart() {
   rebuildBoard();
-  boardRadius = new THREE.Box3().setFromObject(board.root).getBoundingSphere(new THREE.Sphere()).radius;
-  placeGround();
+  boardRadius = measureBoard(board.root);
+  frameBoard();
   physics?.free();
   physics = createPhysics(LEVEL);
   game.restart();
@@ -1096,7 +1178,7 @@ function saveResume() {
     seconds: playClock.seconds,
     hints: tally.hints,
     rewinds: tally.rewinds,
-    view: { q: model.quaternion.toArray(), d: distance },
+    view: { q: model.quaternion.toArray(), k: zoomK },   // k は寄り引きの比（E1。距離は画面と盤面で決め直す）
     physics: snap,
   });
 }
@@ -1122,7 +1204,8 @@ function resumeFrom(record) {
   game.resume(r, r.path);
   const q = r.view?.q;
   if (Array.isArray(q) && q.length === 4 && q.every(Number.isFinite) && Math.hypot(...q) > 0.5) model.quaternion.fromArray(q).normalize();
-  if (Number.isFinite(r.view?.d) && r.view.d > 0) zoomBy(distance / r.view.d);
+  // 寄り引きは比で戻す（E1 より前の保存の d は、距離の決め方が変わったので使わず、収めた距離のまま）
+  if (Number.isFinite(r.view?.k) && r.view.k > 0) zoomBy(zoomK / r.view.k);
   let restored = false;
   const snap = decodeSnapshot(r.physics);
   if (snap) {
@@ -1255,27 +1338,50 @@ function onTap(x, y) {
 // ---- 指の操作 ----
 
 const gesture = createGesture();
-function handle(events) {
+// 惰性で速く回っている所へ指を置いたら、それは「止める」操作で、離してもタップにしない（狙っていないねじが外れないように）
+const CATCH_SPEED = 0.3;   // ピクセル毎ミリ秒
+let caught = false;
+let pinched = false;
+function handle(events, t) {
   for (const e of events) {
-    if (e.type === 'rotate') rotateBy(e.dx, e.dy);
-    else if (e.type === 'zoom') zoomBy(e.scale);
-    else if (e.type === 'tap') onTap(e.x, e.y);
+    if (e.type === 'rotate') {
+      rotateBy(e.dx, e.dy);
+      if (!pinched) inertia.push(e.dx, e.dy, t);
+    } else if (e.type === 'zoom') {
+      pinched = true;
+      zoomBy(e.scale);
+    } else if (e.type === 'tap') {
+      dismissIdleHint();
+      if (!caught) onTap(e.x, e.y);
+    }
   }
 }
 
 canvas.addEventListener('pointerdown', (e) => {
   feedback.unlock();   // 音は利用者の操作の中でしか鳴らし始められない
-  canvas.setPointerCapture(e.pointerId);
-  handle(gesture.down(e.pointerId, e.clientX, e.clientY, e.timeStamp));
+  try { canvas.setPointerCapture(e.pointerId); } catch { /* 合成した指（スクリーンショットのスクリプト）は捕まえられない */ }
+  if (gesture.activePointers === 0) {
+    caught = stopSpin() > CATCH_SPEED;
+    pinched = false;
+  }
+  handle(gesture.down(e.pointerId, e.clientX, e.clientY, e.timeStamp), e.timeStamp);
 });
 canvas.addEventListener('pointermove', (e) => {
-  handle(gesture.move(e.pointerId, e.clientX, e.clientY, e.timeStamp));
+  handle(gesture.move(e.pointerId, e.clientX, e.clientY, e.timeStamp), e.timeStamp);
 });
 canvas.addEventListener('pointerup', (e) => {
-  handle(gesture.up(e.pointerId, e.clientX, e.clientY, e.timeStamp));
+  handle(gesture.up(e.pointerId, e.clientX, e.clientY, e.timeStamp), e.timeStamp);
+  // 全部の指が離れたら、離す直前の速さで惰性を付ける（ピンチを含んだ操作では付けない）
+  if (gesture.activePointers === 0) {
+    if (!pinched && inertia.release(e.timeStamp)) {
+      lastSpin = 0;
+      wake();
+    } else inertia.stop();
+  }
 });
 canvas.addEventListener('pointercancel', (e) => {
-  handle(gesture.cancel(e.pointerId));
+  handle(gesture.cancel(e.pointerId), e.timeStamp);
+  if (gesture.activePointers === 0) inertia.stop();
 });
 // PC で試すとき用: ホイールで寄り引き
 canvas.addEventListener('wheel', (e) => {
@@ -1465,6 +1571,7 @@ let lastDraw = 0;
 function frame(now) {
   framePending = false;
   stepPhysics(now);
+  spinStep(now);
   if (tweens.size) {
     runTweens();
     needsRender = true;
@@ -1479,7 +1586,7 @@ function frame(now) {
   const moving = physics.moving();
   if (wasMoving && !moving) saveResume();   // 板が落ち着いた姿勢を保存する
   wasMoving = moving;
-  if (moving || tweens.size || needsRender) wake();
+  if (moving || tweens.size || needsRender || inertia.active) wake();
   else lastFrame = 0;
 }
 let wasMoving = false;
@@ -1513,13 +1620,43 @@ window.__app = {
   get pixelRatio() { return renderer.getPixelRatio(); },
   get mascotDrawing() { return mascot.enabled; },
   loadMode,
-  get rendered() { return !loading && !needsRender && !tweens.size && !playing && !physics?.moving(); },
+  get rendered() { return !loading && !needsRender && !tweens.size && !playing && !physics?.moving() && !inertia.active; },
   // rendered が false の理由（スクリーンショットのスクリプトが待ちきれなかったとき用）
   why: () => ({ loading, needsRender, tweens: tweens.size, playing, moving: physics?.moving(), modes: window.__app.plateModes() }),
   // 立体の向きを Euler で直接決める（スクリーンショットで同じ向きから撮るため）
-  view(x, y, z, d = distance) {
+  // k は寄り引きの比（1 で空きに収まった距離）
+  view(x, y, z, k = zoomK) {
+    stopSpin();
     model.rotation.set(x, y, z);
-    zoomBy(distance / d);
+    zoomBy(zoomK / k);
+  },
+  // 構図: 立体を置く空き（CSS ピクセルの四角）と、収めた距離・今の距離
+  get framing() { return { region, fitDist, distance, zoomK, radius: boardRadius, groundRadius }; },
+  get spinning() { return inertia.active; },
+  // 立体（盤面に残っている板とねじ）を画面に写した外接の四角（CSS ピクセル）
+  boardRect() {
+    const v = new THREE.Vector3(), m = new THREE.Matrix4(), w = window.innerWidth, h = window.innerHeight;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    camera.updateMatrixWorld();
+    const add = (mat, pos) => {
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i).applyMatrix4(mat).project(camera);
+        const x = (v.x + 1) / 2 * w, y = (1 - v.y) / 2 * h;
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      }
+    };
+    board.root.updateWorldMatrix(true, true);
+    board.root.traverseVisible((o) => {
+      if (!o.isMesh) return;
+      const pos = o.geometry.attributes.position;
+      if (!o.isInstancedMesh) return add(o.matrixWorld, pos);
+      for (let i = 0; i < o.count; i++) {
+        o.getMatrixAt(i, m);
+        if (m.elements[0] === 0 && m.elements[5] === 0 && m.elements[10] === 0) continue;   // 外したねじ（大きさ 0）
+        add(m.premultiply(o.matrixWorld), pos);
+      }
+    });
+    return { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
   },
   plateModes: () => Object.fromEntries(LEVEL.plates.map((p) => [p.id, physics.mode(p.id)])),
   platePoses: () => physics.poses(),

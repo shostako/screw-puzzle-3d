@@ -89,6 +89,12 @@
 //   progress-chapter-end.png    到達 10 の端末でステージ 10 をクリアした画面（章の星の合計と次の章の予告）
 //   progress-chapter-intro.png  「第2章へ」で開いたステージ 11 のお披露目（立体が回りながら出て、章の名前の帯）
 //   あわせて、遊び直しのクリアで到達が戻らず章の終わりも出ないこと、鍵のステージが押せないこと、既存の記録が残ることを確かめる
+//   （構図と手触り、E1。ステージ 1・8 の車・10 の家・12 のぶた・37 を開いた直後）
+//   frame-<ステージ>.png     立体が HUD とボタン列の間の空きに収まっているところ（空きの 8 割前後を占めることを確かめる）
+//   frame-size-<名前>.png    小さめ 360×640・大きめ 430×932 でステージ 8 を開いた直後
+//   frame-zoom.png           ピンチで寄ったところ（「向きを戻す」で収めた距離へ戻ることも確かめる）
+//   あわせて、はじくと指を離した後も回り続けて止まること、止めてから離すと回らないこと、
+//   惰性で回っている所に指を置くと止まり、その指はねじを外さないことを確かめる
 // SHOTS=stage のように組を絞って撮れる。以後の PR では、このファイルの shots に場面を足して使い回す。
 import { createServer } from 'node:http';
 import { readFile, mkdir } from 'node:fs/promises';
@@ -98,7 +104,7 @@ import { chromium } from 'playwright-core';
 
 const dist = resolve(new URL('../dist/', import.meta.url).pathname);
 const outDir = resolve(process.argv[2] ?? 'screenshots');
-// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo で撮る組を絞れる（既定は全部）。box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光
+// SHOTS=box,gen,theme,stage,size,fx,mascot,rating,hint,undo,frame,resume,chapter,progress,look で撮る組を絞れる（既定は全部）。frame は構図と慣性（E1）、box は固定の箱、gen は生成した盤面、theme は題材、stage はステージの進行、size は画面の大きさ、fx は分解の演出、mascot はマスコット、rating はクリアの評価、hint はヒント、undo は戻る、random はおまかせと今日の1問、settings は設定、resume は続きから遊べる、chapter は章（E8）、progress はステージ一覧と章の終わり（E9）、look は質感と光
 const only = (group) => !process.env.SHOTS || process.env.SHOTS.split(',').includes(group);
 
 // 代表的なスマホ縦画面（CSS ピクセル）
@@ -157,12 +163,15 @@ async function touch(cdp, type, points) {
   });
 }
 
-async function drag(cdp, from, to, steps = 12) {
+// 既定では、なぞり終えた所で指を止めてから離す（惰性を付けない。E1）。fling: true なら動かしたまま離す（はじく）
+async function drag(cdp, from, to, steps = 12, { fling = false } = {}) {
   await touch(cdp, 'touchStart', [from]);
   for (let i = 1; i <= steps; i++) {
     const t = i / steps;
     await touch(cdp, 'touchMove', [[from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t]]);
+    if (fling) await new Promise((r) => setTimeout(r, 12));
   }
+  if (!fling) await new Promise((r) => setTimeout(r, 150));
   await touch(cdp, 'touchEnd', []);
 }
 
@@ -215,7 +224,7 @@ const shots = [
   } },
   // 立体を倒すと S は滑り落ちて消える。天板のねじを t4 だけ残すと、天板は t4 を軸にぶら下がる
   { name: 'hanging', act: async (cdp, page) => {
-    await page.evaluate(() => window.__app.view(1.1, -0.45, 0.3, 27));
+    await page.evaluate(() => window.__app.view(1.1, -0.45, 0.3, 1.42));
     await waitRendered(page);
     const modes = await page.evaluate(() => window.__app.plateModes());
     if (modes.S !== 'gone') throw new Error(`倒しても札 S が落ちない: ${modes.S}`);
@@ -278,7 +287,7 @@ const shots = [
         const status = await page.evaluate(() => window.__app.game.status);
         if (status !== 'playing') break;
         if (k >= 30) throw new Error('向きを変えても外せるねじが出てこない');
-        await page.evaluate((v) => window.__app.view(...v, 19), views[k++ % views.length]);
+        await page.evaluate((v) => window.__app.view(...v, 1), views[k++ % views.length]);
         continue;
       }
       await removeInPage(page, [id]);
@@ -303,7 +312,7 @@ async function playSolution(page, until = Infinity) {
       // 手順の外の順で先に外していれば、手順の途中でクリアになっている
       if (reason === 'over' && await page.evaluate(() => window.__app.game.status) === 'cleared') return path.length;
       if (reason !== 'blocked' || tries >= 12) throw new Error(`手順のねじ ${id} を外せない: ${reason}`);
-      await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k++ % VIEWS.length]);
+      await page.evaluate((v) => window.__app.view(...v, 1), VIEWS[k++ % VIEWS.length]);
       await waitRendered(page);
     }
     await waitRendered(page);
@@ -316,7 +325,7 @@ const genShots = [
   { name: 'gen-midway', query: `?seed=${GENERATED[0][1]}&kind=${GENERATED[0][0]}`, act: async (cdp, page) => {
     await playSolution(page, 8);
     // 払い落とすために変えた向きを、最初の斜めの向きに戻して撮る
-    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
   } },
   { name: 'gen-cleared', act: async (cdp, page) => {
     await playSolution(page);   // 続きから（外したねじは 'gone' になるので、残りだけが外れる）
@@ -331,12 +340,12 @@ const themeShots = [
   ...THEMED.flatMap(([kind, seed]) => [
     { name: `theme-${kind}`, query: `?seed=${seed}&kind=${kind}`, act: async () => {} },
     { name: `theme-${kind}-below`, act: async (cdp, page) => {
-      await page.evaluate(() => window.__app.view(-0.7, 0.5, 0, 19));
+      await page.evaluate(() => window.__app.view(-0.7, 0.5, 0, 1));
     } },
   ]),
   { name: 'theme-car-midway', query: `?seed=${THEMED[0][1]}&kind=car`, act: async (cdp, page) => {
     await playSolution(page, 9);
-    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
   } },
   { name: 'theme-car-cleared', act: async (cdp, page) => {
     await playSolution(page);
@@ -344,7 +353,7 @@ const themeShots = [
   } },
   // D5: 子の部品（窓・屋根）が付いた客室の最後のねじをタップすると、外せずに子の部品が光る
   { name: 'theme-car-held', query: `?seed=${THEMED[0][1]}&kind=car`, wait: false, act: async (cdp, page) => {
-    await page.evaluate(() => window.__app.view(0.3, -0.9, 0, 17));
+    await page.evaluate(() => window.__app.view(0.3, -0.9, 0, 0.9));
     await waitRendered(page);
     // 片側の窓を外して客室のねじを見せ、客室のねじを外せるものから外していき、最後の 1 本で held になるまで
     // （もう片側の窓と屋根が付いたまま）。落ちた窓に隠れていたら、向きを変えて払い落とす
@@ -360,13 +369,13 @@ const themeShots = [
         if (last === 'held') break;
       }
       if (last !== 'held') {
-        await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k % VIEWS.length]);
+        await page.evaluate((v) => window.__app.view(...v, 1), VIEWS[k % VIEWS.length]);
         await waitRendered(page);
       }
     }
     if (last !== 'held') throw new Error('客室の最後のねじが held にならない');
     // 残っている窓（window2、車の -z の側）が見える向き
-    await page.evaluate(() => window.__app.view(0.35, 2.4, 0, 17));
+    await page.evaluate(() => window.__app.view(0.35, 2.4, 0, 0.9));
     await waitRendered(page);
     // もう一度タップして、光が強い所（FX.held の 1/4）で演出の時計を止めて撮る
     await page.evaluate(() => {
@@ -659,7 +668,7 @@ async function sizeShots(browser, errors, outside) {
     await page.goto(url + '?seed=4&kind=box');
     await waitRendered(page);
     await playSolution(page, 8);
-    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
     await checkLayout();
     await shoot(`size-${name}-midway`);
     await playSolution(page);
@@ -716,7 +725,7 @@ async function fxShots(context, errors, outside) {
       reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
       if (reason === 'ok' || reason === 'gone') break;
       if (reason !== 'blocked' || tries >= 12) throw new Error(`手順のねじ ${id} を外せない: ${reason}`);
-      await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k++ % VIEWS.length]);
+      await page.evaluate((v) => window.__app.view(...v, 1), VIEWS[k++ % VIEWS.length]);
       await waitRendered(page);
     }
     if (reason !== 'ok') continue;
@@ -807,12 +816,12 @@ async function hintShots(context, errors, outside) {
       if (reason === 'ok') break;
       // 落ちた板やぶら下がった板に隠れていれば、回して払い落としてからもう一度
       if (reason !== 'blocked' || tries >= 12) throw new Error(`ヒントのねじ ${id} を外せない: ${reason}`);
-      await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k++ % VIEWS.length]);
+      await page.evaluate((v) => window.__app.view(...v, 1), VIEWS[k++ % VIEWS.length]);
       await waitRendered(page);
     }
     await waitRendered(page);
     if (await page.evaluate(() => window.__app.game.status) !== 'playing') break;
-    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
     await waitRendered(page);
   }
   const [status, hints] = await page.evaluate(() => [window.__app.game.status, window.__app.game.hints]);
@@ -1068,6 +1077,119 @@ async function randomShots(context, errors, outside) {
 // 戻る。生成した箱を手順どおりに途中まで外し、右下の「1手戻す」で2手戻して外し直すと同じ局面になること、
 // わざと待機スロットへ入れて詰ませ、詰みの画面の「1手戻す」と「解ける所まで戻る」が効くことを確かめる
 // 設定。題名から遊び方の画面を開き、「設定」で設定の画面へ
+async function frameShots(browser, errors, outside) {
+  const open = async (viewport) => {
+    const context = await browser.newContext({ viewport, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    const page = await context.newPage();
+    page.on('pageerror', (e) => errors.push(String(e)));
+    page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+    page.on('request', (r) => !r.url().startsWith(url) && !r.url().startsWith('data:') && outside.push(r.url()));
+    return { context, page, cdp: await context.newCDPSession(page) };
+  };
+  const save = async (page, name) => {
+    const path = join(outDir, `${name}.png`);
+    await page.screenshot({ path });
+    console.log(`screenshot: ${path}`);
+  };
+  // 立体が空きに占める割合（幅と高さのうち、空きに対して大きい方）。0.7〜0.95 を「8 割前後」とみなす
+  const fill = async (page, label) => {
+    const { r, f } = await page.evaluate(() => ({ r: window.__app.boardRect(), f: window.__app.framing }));
+    const k = Math.max(r.width / f.region.width, r.height / f.region.height);
+    const cx = r.x + r.width / 2 - f.region.x, cy = r.y + r.height / 2 - f.region.y;
+    console.log(`frame ${label}: 立体 ${r.width.toFixed(0)}×${r.height.toFixed(0)} / 空き ${f.region.width.toFixed(0)}×${f.region.height.toFixed(0)} = ${(k * 100).toFixed(0)}%（中心のずれ ${cx.toFixed(0)}, ${cy.toFixed(0)}）`);
+    if (k < 0.7 || k > 0.95) throw new Error(`${label}: 立体が空きの ${(k * 100).toFixed(0)}% を占める（8 割前後にならない）`);
+    if (r.y < f.region.y - 0.55 * f.region.height) throw new Error(`${label}: 立体が HUD に掛かる`);
+    return k;
+  };
+
+  {
+    const { context, page, cdp } = await open(VIEWPORT);
+    for (const n of [1, 8, 10, 12, 37]) {
+      await page.goto(`${url}?stage=${n}`);
+      await waitRendered(page);
+      await fill(page, `ステージ ${n}`);
+      await save(page, `frame-${n}`);
+    }
+
+    // はじく: 指を離した後も回り続け、止まる。
+    // ヘッドレスの描画は遅く、CDP の指は 1 回ごとに描画を待つので動きの間が 200 ミリ秒ほど空いてしまう（止めてから離したことになる）。
+    // そこで指の出来事をページの中で、描画を挟まずに 12 ミリ秒おきに合成して送る
+    const synth = (from, to, n, holdMs = 0) => page.evaluate(({ from, to, n, holdMs }) => {
+      const el = document.getElementById('stage');
+      const busy = (ms) => { const t = performance.now() + ms; while (performance.now() < t); };
+      const send = (type, x, y) => el.dispatchEvent(new PointerEvent(type, { pointerId: 77, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y, bubbles: true }));
+      send('pointerdown', ...from);
+      for (let i = 1; i <= n; i++) {
+        busy(12);
+        send('pointermove', from[0] + ((to[0] - from[0]) * i) / n, from[1] + ((to[1] - from[1]) * i) / n);
+      }
+      busy(holdMs);
+      send('pointerup', ...to);
+      return window.__app.spinning;
+    }, { from, to, n, holdMs });
+    const angle = (a, b) => 2 * Math.acos(Math.min(1, Math.abs(a.reduce((t, v, i) => t + v * b[i], 0))));
+    const q = () => page.evaluate(() => window.__app.model.quaternion.toArray());
+    const c = [VIEWPORT.width / 2, 420];
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
+    await waitRendered(page);
+    let q0 = await q();
+    if (!(await synth(c, [c[0] + 120, c[1]], 8))) throw new Error('はじいても惰性で回らない');
+    const q1 = await q();
+    await waitRendered(page);
+    const q2 = await q();
+    const during = angle(q0, q1), coast = angle(q1, q2);
+    console.log(`frame 慣性: 指で ${during.toFixed(2)} rad、離した後に ${coast.toFixed(2)} rad`);
+    if (coast < 0.2) throw new Error(`はじいた後の惰性が小さい: ${coast.toFixed(3)} rad`);
+    if (coast > 3.2) throw new Error(`はじいた後に回りすぎる: ${coast.toFixed(3)} rad`);
+
+    // 止めてから離すと回らない
+    if (await synth(c, [c[0] + 120, c[1]], 8, 120)) throw new Error('指を止めてから離したのに惰性で回る');
+
+    // 惰性で回っている所に指を置くと止まり、その指（タップ）ではねじを外さない。
+    // 比べるため、回っていない時に同じ所をタップすると外れることも確かめる
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
+    await waitRendered(page);
+    const legal = await page.evaluate(() => window.__app.legal());
+    const target = (await page.evaluate(() => window.__app.visibleScrews())).find((s) => legal.includes(s.id));
+    if (!target) throw new Error('外せる見えたねじが無い');
+    const before = await page.evaluate(() => window.__app.moves);
+    await synth([c[0] - 80, c[1]], [c[0] + 80, c[1]], 8);
+    await synth([target.x, target.y], [target.x, target.y], 0);
+    if (await page.evaluate(() => window.__app.spinning)) throw new Error('指を置いても惰性が止まらない');
+    if (await page.evaluate(() => window.__app.moves) !== before) throw new Error('惰性を止めた指でねじが外れた');
+    // 惰性で回った向きを戻してから、同じねじをタップする
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
+    await waitRendered(page);
+    await synth([target.x, target.y], [target.x, target.y], 0);
+    await waitRendered(page);
+    if (await page.evaluate(() => window.__app.moves) !== before + 1) throw new Error('止まっている時のタップでねじが外れない');
+
+    // ピンチで寄って撮り、「向きを戻す」で収めた距離に戻る
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
+    await pinch(cdp, c, 120, 190);
+    await waitRendered(page);
+    const zoomed = await page.evaluate(() => window.__app.framing.zoomK);
+    if (!(zoomed < 0.9)) throw new Error(`ピンチで寄れない: ${zoomed}`);
+    await save(page, 'frame-zoom');
+    const home = await page.locator('#home').boundingBox();
+    await tap(cdp, [home.x + home.width / 2, home.y + home.height / 2]);
+    await page.waitForTimeout(600);
+    await waitRendered(page);
+    const back = await page.evaluate(() => window.__app.framing);
+    if (Math.abs(back.zoomK - 1) > 1e-6 || Math.abs(back.distance - back.fitDist) > 1e-6) throw new Error(`向きを戻しても収めた距離に戻らない: ${JSON.stringify(back)}`);
+    await context.close();
+  }
+
+  for (const [name, viewport] of [['small', { width: 360, height: 640 }], ['large', { width: 430, height: 932 }]]) {
+    const { context, page } = await open(viewport);
+    await page.goto(`${url}?stage=8`);
+    await waitRendered(page);
+    await fill(page, `${name} ステージ 8`);
+    await save(page, `frame-size-${name}`);
+    await context.close();
+  }
+}
+
 async function settingsShots(context, errors, outside) {
   const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -1100,7 +1222,7 @@ async function settingsShots(context, errors, outside) {
   };
   // 盤面の真ん中を右へ 120px なぞって、回った角度（ラジアン）
   const turnAngle = async () => {
-    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+    await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
     const q0 = await page.evaluate(() => window.__app.model.quaternion.toArray());
     const c = [VIEWPORT.width / 2, VIEWPORT.height / 2];
     await drag(cdp, c, [c[0] + 120, c[1]]);
@@ -1130,7 +1252,7 @@ async function settingsShots(context, errors, outside) {
   const fastTurn = await turnAngle();
   const ratio = fastTurn / normalTurn;
   if (Math.abs(ratio - 1.4) > 0.15) throw new Error(`回す速さ「はやい」の回り方が合わない: ${normalTurn.toFixed(3)} → ${fastTurn.toFixed(3)}`);
-  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
   await waitRendered(page);
   if (await page.locator('#mascot').isVisible()) throw new Error('ネジまるを隠しても見えている');
   await save('settings-light');
@@ -1182,10 +1304,10 @@ async function undoShots(context, errors, outside) {
   await waitRendered(page);
   if (!(await page.locator('#undo').isDisabled())) throw new Error('外す前から「1手戻す」が押せる');
   await playSolution(page, 4);
-  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
   const at2 = await snapshot();
   await playSolution(page, 6);
-  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
   await shoot('undo-before');
   for (let i = 0; i < 2; i++) {
     await tapButton('#undo');
@@ -1207,7 +1329,7 @@ async function undoShots(context, errors, outside) {
     if (n === 6) {
       await tapButton('#hint-btn');
       await page.waitForSelector('#overlay.deadend:not([hidden]) #rewind:not([hidden])');
-      await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+      await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
       await shoot('undo-deadend');
       await tapButton('#resume');
       await page.waitForSelector('#overlay', { state: 'hidden' });
@@ -1216,13 +1338,13 @@ async function undoShots(context, errors, outside) {
       const reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
       if (reason === 'ok') break;
       if (reason !== 'blocked' || tries >= 12) throw new Error(`詰ませる手順のねじ ${id} を外せない: ${reason}`);
-      await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k++ % VIEWS.length]);
+      await page.evaluate((v) => window.__app.view(...v, 1), VIEWS[k++ % VIEWS.length]);
       await waitRendered(page);
     }
     await waitRendered(page);
   }
   await page.waitForSelector('#overlay.stuck:not([hidden]) #rewind:not([hidden])');
-  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 19));
+  await page.evaluate(() => window.__app.view(0.45, -0.6, 0, 1));
   await shoot('undo-stuck');
   const stuckAt = await moves();
   const stuckState = await snapshot();
@@ -1255,7 +1377,7 @@ async function undoShots(context, errors, outside) {
       const reason = await page.evaluate((id) => window.__app.tapScrew(id), id);
       if (reason === 'ok') break;
       if (reason !== 'blocked' || tries >= 12) throw new Error(`ヒントのねじ ${id} を外せない: ${reason}`);
-      await page.evaluate((v) => window.__app.view(...v, 19), VIEWS[k++ % VIEWS.length]);
+      await page.evaluate((v) => window.__app.view(...v, 1), VIEWS[k++ % VIEWS.length]);
       await waitRendered(page);
     }
     await waitRendered(page);
@@ -1448,6 +1570,7 @@ try {
   if (only('resume')) await resumeShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('chapter')) await chapterShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (only('progress')) await progressShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
+  if (only('frame')) await frameShots(browser, errors, outside);
   if (only('stage')) await stageShots(await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 2, isMobile: true, hasTouch: true }), errors, outside);
   if (outside.length) throw new Error(`外部への読み込みがあった: ${outside.join(', ')}`);
   if (errors.length) throw new Error(`ページでエラー: ${errors.join(' / ')}`);
