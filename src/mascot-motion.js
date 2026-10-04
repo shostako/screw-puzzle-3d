@@ -2,7 +2,9 @@
 // mascot.js がこの姿勢で立体を動かすだけ。形・寸法・動きは docs/design/mockup.src.html の試作から写した。
 //
 // 動き（action）:
-//   idle   待機。小さく弾んで揺れ、ときどき瞬きする（縦長の大きな瞳）
+//   idle   待機。小さく弾んで揺れ、ときどき瞬きする（縦長の大きな瞳）。
+//          F: ゆっくり呼吸し、ときどき盤面の方を見上げて見回し、レンチをくるっと回す（どれも時計だけで決まる。描く回数は増えない）
+//   wave   盤面が始まった（F）。^ ^ の目で空いた左手を振る。終わったら待機へ戻る
 //   win    成功（クリア ★3）。^ ^ の目でバンザイして、1回転しながら3回跳ぶ。跳び終えたら ^ ^ のままバンザイで待つ
 //   win2   成功（クリア ★2）。^ ^ の目でレンチを高く掲げ、回らずに2回跳ぶ。跳び終えたらレンチを掲げて揺れる
 //   win1   成功（クリア ★1）。開いた目で「ふう」と小さく1回跳び、空いた手で額をぬぐう。その後は待機の顔で小さく揺れる
@@ -27,6 +29,7 @@ export const cueAction = (cue, opts = {}) =>
 // 動きの長さ（秒）。hold は終わった後もその動きのまま待つもの。rank が高い動きは低い動きに割り込まれない
 export const ACTIONS = {
   idle: { s: Infinity, hold: true, rank: 0 },
+  wave: { s: 1.4, hold: false, rank: 0 },
   flinch: { s: 0.45, hold: false, rank: 1 },
   joy: { s: 0.75, hold: false, rank: 2 },
   win: { s: 3.3, hold: true, rank: 3 },
@@ -36,6 +39,14 @@ export const ACTIONS = {
 };
 export const WIN_JUMP = 1.1;     // 1回の跳びの長さ（秒）。最初の跳びで1回転する
 export const BLINK = { every: 3.4, s: 0.12 };
+// 待機の見回し（F）。LOOK.every 秒ごとに、盤面の方（画面の右上）を見上げてしばらく見て、戻ってから反対へちらっと見る。
+// [始め, 終わり, 首の向き, 見上げ] の区間で、区間のあいだは滑らかにつなぐ
+export const LOOK = {
+  every: 9,
+  keys: [[0, 0, 0, 0], [0.9, 1.7, 0.55, -0.12], [3.2, 4.0, 0, 0], [5.6, 6.1, -0.3, 0.03], [6.9, 7.5, 0, 0]],
+};
+// レンチをくるっと1回転させる（F）。TWIRL.every 秒ごと、TWIRL.at 秒から TWIRL.s 秒
+export const TWIRL = { every: 13, at: 10.4, s: 0.7 };
 
 const clamp01 = (k) => Math.min(1, Math.max(0, k));
 const smooth = (k) => { k = clamp01(k); return k * k * (3 - 2 * k); };
@@ -44,32 +55,58 @@ const smooth = (k) => { k = clamp01(k); return k * k * (3 - 2 * k); };
 const ARM_R = [1.2, 0, -0.9];
 const ARM_L = [-0.25, 0, 0];
 
+// 見回しの首の向きと見上げ（clock は通しの秒）
+export function lookAt(clock) {
+  const c = ((clock % LOOK.every) + LOOK.every) % LOOK.every;
+  const k = LOOK.keys;
+  let i = k.length - 1;
+  while (i > 0 && c < k[i][0]) i--;
+  const [t0, t1, turn, up] = k[i];
+  if (!i || c >= t1) return { turn, up };
+  // 区間 [t0, t1] の間は、前の区間の向きからこの区間の向きへ動く
+  const [, , turn0, up0] = k[i - 1];
+  const f = smooth((c - t0) / (t1 - t0));
+  return { turn: turn0 + (turn - turn0) * f, up: up0 + (up - up0) * f };
+}
+
 // 待機の姿勢（clock は通しの秒。止まっている間も呼吸のように動く）
 function idlePose(clock, still) {
   const m = still ? 0 : 1;
+  const breath = Math.sin(clock * 1.6);   // ゆっくりした呼吸（F）
+  const look = lookAt(clock);
+  const tw = ((clock % TWIRL.every) - TWIRL.at) / TWIRL.s;
   return {
     y: Math.abs(Math.sin(clock * 2.4)) * 0.03 * m,
     spin: 0,
-    squash: 1 + Math.sin(clock * 4.8) * 0.012 * m,
+    squash: 1 + (Math.sin(clock * 4.8) * 0.008 + breath * 0.014) * m,
     sway: Math.sin(clock * 1.2) * 0.03 * m,
     shake: 0,
-    headTilt: 0,
+    headTilt: look.up * m,
     headSide: 0,
+    headTurn: look.turn * m,
     face: 'open',
     brows: 'normal',
     mouth: 'open',
     armR: [ARM_R[0] + Math.sin(clock * 2.4) * 0.06 * m, ARM_R[1], ARM_R[2]],
-    armL: [...ARM_L],
+    armL: [ARM_L[0] - breath * 0.05 * m, ARM_L[1], ARM_L[2]],
     legSwing: 0,
     keyFlip: 0,
+    keyTwirl: tw > 0 && tw < 1 ? smooth(tw) * Math.PI * 2 * m : 0,
     sweat: null,
-    blink: (clock % BLINK.every) < BLINK.s,
+    // 瞬き。見回しの周期の頭では2回続けて瞬く（F）
+    blink: (clock % BLINK.every) < BLINK.s || (m > 0 && Math.abs((clock % LOOK.every) - 0.35) < BLINK.s / 2),
   };
 }
 
 // 動き action の、始まってから t 秒の姿勢。still は「視差効果を減らす」設定（待機の揺れを止める）
 export function mascotPose(action, t, clock = t, still = false) {
   const p = idlePose(clock, still);
+  // 見回しとレンチ回しは待機（と手を振る・小さな動き）だけ。成功・失敗では正面を向く
+  if (ACTIONS[action]?.hold && action !== 'idle') {
+    p.headTurn = 0;
+    p.headTilt = 0;
+    p.keyTwirl = 0;
+  }
   if (action === 'win') {
     p.face = 'happy';
     p.mouth = 'big';
@@ -146,6 +183,16 @@ export function mascotPose(action, t, clock = t, still = false) {
     p.squash *= k < 0.12 ? 1 - (0.12 - k) * 0.8 : 1 + hop * 0.03;
     p.armL[0] -= hop * 2.2;   // 空いている左手を上げる
     p.legSwing = hop * 0.25;
+  } else if (action === 'wave') {
+    // 空いた左手を上げて、2回半振る（始めと終わりは待機の腕へ滑らかにつなぐ）
+    const k = clamp01(t / ACTIONS.wave.s);
+    const up = smooth(k / 0.2) * (1 - smooth((k - 0.8) / 0.2));
+    p.face = up > 0.3 ? 'happy' : 'open';
+    p.blink = p.blink && up <= 0.3;
+    p.armL = [p.armL[0] - up * (1.55 + Math.sin(k * Math.PI * 5) * 0.35), p.armL[1] + up * 1.0, 0];
+    p.headSide = up * -0.07;
+    p.headTurn *= 1 - up;
+    p.headTilt *= 1 - up;
   } else if (action === 'flinch') {
     const k = clamp01(t / ACTIONS.flinch.s);
     p.brows = 'worried';
