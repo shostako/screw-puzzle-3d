@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
-import { CUE_ACTION, cueAction, ACTIONS, WIN_JUMP, mascotPose, createMascotState } from '../src/mascot-motion.js';
+import { CUE_ACTION, STAR_WIN, cueAction, ACTIONS, WIN_JUMP, mascotPose, createMascotState } from '../src/mascot-motion.js';
 import { buildMascot, applyPose, frameCamera } from '../src/mascot.js';
 import { VIBRATION, endCue, eventCue, tapCue } from '../src/feedback.js';
 
@@ -28,6 +28,42 @@ describe('どの合図でどう動くか', () => {
     expect(cueAction(tapCue('full'))).toBe('flinch');
     // ふだんの手（外す・箱やスロットに入る・板が落ちる）では動かない（毎回動くとうるさい）
     for (const cue of ['unscrew', 'box', 'slot', 'plate', null]) expect(cueAction(cue)).toBeNull();
+  });
+});
+
+describe('クリアの星で喜び方を変える（E5）', () => {
+  it('★3 は 1回転して3回跳ぶ、★2 は回らずに2回跳ぶ、★1 は小さく1回跳ぶ。星が無ければ ★3', () => {
+    expect(cueAction('cleared', { stars: 3 })).toBe('win');
+    expect(cueAction('cleared', { stars: 2 })).toBe('win2');
+    expect(cueAction('cleared', { stars: 1 })).toBe('win1');
+    expect(cueAction('cleared')).toBe('win');
+    for (const a of Object.values(STAR_WIN)) expect(ACTIONS[a]).toMatchObject({ hold: true, rank: ACTIONS.win.rank });
+    const hops = (a) => {
+      const ys = Array.from({ length: 400 }, (_, i) => mascotPose(a, (i / 399) * ACTIONS[a].s, 0, true).y);
+      let n = 0;
+      for (let i = 1; i < ys.length - 1; i++) if (ys[i] > 0.1 && ys[i] >= ys[i - 1] && ys[i] > ys[i + 1]) n++;
+      return { n, top: Math.max(...ys) };
+    };
+    const [one, two, three] = ['win1', 'win2', 'win'].map(hops);
+    expect(three.n).toBe(3);
+    expect(two.n).toBe(2);
+    expect(one.n).toBe(1);
+    expect(three.top).toBeGreaterThan(two.top);
+    expect(two.top).toBeGreaterThan(one.top);
+    // 回るのは ★3 だけ
+    const spins = (a) => Math.max(...Array.from({ length: 50 }, (_, i) => Math.abs(mascotPose(a, (i / 49) * ACTIONS[a].s, 0, true).spin)));
+    expect(spins('win')).toBeGreaterThan(Math.PI);
+    expect(spins('win2')).toBe(0);
+    expect(spins('win1')).toBe(0);
+  });
+
+  it('★ごとの喜びもやり直すまでそのまま。章の終わりに同じ星でもう1回跳べる', () => {
+    const st = createMascotState(0);
+    expect(st.react('cleared', 0, { stars: 2 })).toBe(true);
+    expect(st.current(60000).action).toBe('win2');
+    expect(st.react('boxFull', 61000)).toBe(false);
+    expect(st.react('cleared', 62000, { stars: 2 })).toBe(true);
+    expect(st.current(62000).t).toBe(0);
   });
 });
 
