@@ -21,10 +21,28 @@ function rapierWasmFile() {
   };
 }
 
+// 物理の wasm（gzip で約 1.2MB、起動で一番大きな荷物）を、index.html の <link rel="preload"> で JS と同時に読み始める（E11）。
+// これが無いと、JS を読んで実行し、3D の準備（描き手・ネジまる）を終えてから wasm を読み始めるので、遅い回線では待ちが足し算になる。
+// as="fetch" と crossorigin（anonymous）は、wasm-bindgen の fetch(URL) と同じ読み方なので、読んだものがそのまま使われる
+function preloadRapierWasm() {
+  return {
+    name: 'preload-rapier-wasm',
+    apply: 'build',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        const wasm = Object.values(ctx.bundle ?? {}).find((f) => f.type === 'asset' && /rapier.*\.wasm$/.test(f.fileName));
+        if (!wasm) throw new Error('物理の wasm が出力に見つからない（rapierWasmFile の後に動くはず）');
+        return [{ tag: 'link', attrs: { rel: 'preload', href: `./${wasm.fileName}`, as: 'fetch', type: 'application/wasm', crossorigin: '' }, injectTo: 'head' }];
+      },
+    },
+  };
+}
+
 // base を相対にして、GitHub Pages のサブパス（/screw-puzzle-3d/）でも Capacitor の中でも同じ dist/ が動くようにする
 export default defineConfig({
   base: './',
-  plugins: [rapierWasmFile()],
+  plugins: [rapierWasmFile(), preloadRapierWasm()],
   // three.js と物理の JS（wasm を除く）で 1MB 弱。これを超えたら何かが紛れ込んでいる
   build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 1000 },
   // 生成器とステージのテストは多数の盤面を作るので、既定の 5 秒では並列に走らせたときに打ち切られる。

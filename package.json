@@ -12,7 +12,8 @@
     "app:web": "bash scripts/build_app.sh",
     "app:apk": "bash scripts/build_app.sh && cd android && ./gradlew assembleDebug",
     "app:offline": "node scripts/offline-check.mjs",
-    "font": "node scripts/font.mjs"
+    "font": "node scripts/font.mjs",
+    "perf": "node scripts/perf.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-deterministic-compat": "^0.21.0",

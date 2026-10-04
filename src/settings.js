@@ -20,8 +20,8 @@ export const SPEEDS = {
 // 画質: 盤面を描く解像度の候補（自動は重ければ順に下げる）、ねじの頭のローレットを刻むか、板の接する所の暗さを出すか（E2）、
 // ネジまるの解像度と待機中の描く間隔
 export const QUALITIES = {
-  auto: { label: '自動', pixelRatios: [2, 1.5, 1.25, 1], knurl: true, contact: true, mascotRatio: 2, idleEvery: 2 },
-  light: { label: '軽い', pixelRatios: [1], knurl: false, contact: false, mascotRatio: 1, idleEvery: 4 },
+  auto: { label: '自動', pixelRatios: [2, 1.5, 1.25, 1], knurl: true, contact: true, mascotRatio: 2, idleFps: 30, blur: true },
+  light: { label: '軽い', pixelRatios: [1], knurl: false, contact: false, mascotRatio: 1, idleFps: 15, blur: false },
 };
 
 // drives: ねじ穴の形を色ごとに変えるか（E2 の色の見分け。既定は全部六角穴のキャップボルト）
