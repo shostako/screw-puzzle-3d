@@ -63,7 +63,8 @@
 //   daily-menu-done.png  ステージへ戻ってから遊び方の画面を開いたところ（今日の1問がクリア済みと星）
 //   あわせて、?random=番号&diff= で同じ番号の盤面が開くこと、おまかせ・今日の1問のクリアでステージの到達が進まないことを確かめる
 //   （設定。保存の無い新しい端末として開き、題名 → 遊び方の画面の「設定」を指でタップして）
-//   settings.png        設定の画面（既定: 音・振動 入、回す速さ ふつう、画質 自動、ネジまる 出す）
+//   settings.png        設定の画面（既定: 音・振動 入、曲 オルゴール、回す速さ ふつう、画質 自動、ネジまる 出す）
+//   settings-track.png  BGM の曲で「ほしぞら」を選んだところ（F）
 //   settings-light.png  画質「軽い」・ネジまる「隠す」にして閉じた盤面（ねじの頭にローレットが無い、左下にネジまるが居ない）
 //   settings-clear.png  「記録を消す」を1回押して、確かめの文字に変わったところ
 //   あわせて、回す速さ「はやい」で同じ指の動きが ふつう の約 1.4 倍回ること、画質「軽い」で描く解像度が 1 になること、
@@ -1461,11 +1462,18 @@ async function settingsShots(context, errors, outside) {
   const normalTurn = await turnAngle();
   await openSettings();
   const shown = await page.evaluate(() => window.__app.settings.all());
-  if (JSON.stringify(shown) !== JSON.stringify({ sound: true, bgm: true, vibrate: true, speed: 'normal', quality: 'auto', mascot: true, drives: false })) throw new Error(`設定の既定が違う: ${JSON.stringify(shown)}`);
+  if (JSON.stringify(shown) !== JSON.stringify({ sound: true, bgm: true, bgmTrack: 'orgel', vibrate: true, speed: 'normal', quality: 'auto', mascot: true, drives: false })) throw new Error(`設定の既定が違う: ${JSON.stringify(shown)}`);
   const card = await page.locator('#settings .card').boundingBox();
   if (card.x < 0 || card.x + card.width > VIEWPORT.width || card.y < 0 || card.y + card.height > VIEWPORT.height) throw new Error('設定の画面がはみ出す');
   await save('settings');
 
+  // BGM の曲（F）: 選ぶと押した形になり、鳴っている曲も替わる
+  await pick('bgmTrack', 'stars');
+  if (await page.locator('#settings .seg[data-key="bgmTrack"] button[data-v="stars"]').getAttribute('aria-pressed') !== 'true') throw new Error('曲を選んでも押した形にならない');
+  const playing = await page.evaluate(() => window.__app.bgmTrack);
+  if (playing && playing !== 'stars') throw new Error(`曲を選んでも BGM が替わらない: ${playing}`);
+  console.log(`BGM の曲: ${playing ?? '（ヘッドレスでは鳴っていない）'}`);
+  await save('settings-track');
   await pick('speed', 'fast');
   await pick('quality', 'light');
   await pick('mascot', 'false');
@@ -1485,7 +1493,7 @@ async function settingsShots(context, errors, outside) {
   await page.reload();
   await waitRendered(page);
   const kept = await page.evaluate(() => window.__app.settings.all());
-  if (JSON.stringify(kept) !== JSON.stringify({ sound: true, bgm: false, vibrate: false, speed: 'fast', quality: 'light', mascot: false, drives: false })) throw new Error(`設定が再読み込みで残らない: ${JSON.stringify(kept)}`);
+  if (JSON.stringify(kept) !== JSON.stringify({ sound: true, bgm: false, bgmTrack: 'stars', vibrate: false, speed: 'fast', quality: 'light', mascot: false, drives: false })) throw new Error(`設定が再読み込みで残らない: ${JSON.stringify(kept)}`);
   if (await page.locator('#mascot').isVisible() || await page.evaluate(() => window.__app.mascotDrawing)) throw new Error('再読み込みでネジまるが戻った');
 
   // 記録を消す: ステージ 3 まで進んだ端末で、2 回押すとステージ 1 に戻る。設定は残る
@@ -1494,6 +1502,9 @@ async function settingsShots(context, errors, outside) {
   await waitRendered(page);
   if (await page.evaluate(() => window.__app.stage) !== 3) throw new Error('ステージ 3 から始まらない');
   await openSettings();
+  // BGM を切ったまま曲を選ぶと、BGM が入る（選んだ曲を聞かせる）
+  await pick('bgmTrack', 'walk');
+  if (!(await page.evaluate(() => window.__app.settings.get('bgm')))) throw new Error('曲を選んでも BGM が入らない');
   await tapButton('#s-clear');
   if (await page.locator('#s-clear').textContent() !== 'もう一度押すと消えます') throw new Error('記録を消すの確かめが出ない');
   await save('settings-clear');
