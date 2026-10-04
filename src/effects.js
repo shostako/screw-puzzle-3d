@@ -5,6 +5,9 @@
 //         ねじ部が板から抜けきったら、ポンと少し飛び出して膨らみ、画面の印に持ち替えて箱やスロットへ回りながら飛ぶ。
 //   板:   最後のねじが抜けた瞬間に、ぷくっと膨らんで白く光る（はじける）。盤面の外まで落ちたら、回りながら外へ落ちて消える。
 //   箱:   最後の1本が入ると、ふたが閉まり（ここで音と振動）、箱ははずんで上へ抜け、次の箱が出る。
+//         続けて満杯になると連鎖（E5）: ふたの星が増え、音程が上がる。
+//   手応え（E5）: 指が触れた瞬間にねじ頭がわずかに沈み、離すと戻る。外せないねじは、塞いでいる板が一瞬光る。
+//   クリア（E5）: 最後の板が落ちた後にねじの雨を降らせ、少し間を置いてからカードを出す。
 
 import { BOLT } from './scene.js';
 
@@ -20,6 +23,10 @@ export const FX = {
   held: { ms: 700, tint: 0.75, glow: 0.15 },                    // 親を留めている子の部品が橙に染まる（2回。色を寄せる割合と光の強さ）
   drop: { ms: 900, fall: 26, drift: 3, turns: 0.7 },            // 盤面の外へ落ちた板（落ちる距離・横へ流れる距離・回る回数）
   box: { settle: 60, lid: 160, hold: 110, leave: 220, spawn: 160 },
+  press: { ms: 60, back: 160, depth: 0.28 },                    // 押し込み: 沈む時間・戻る時間・沈む深さ × r
+  blocker: { ms: 460, tint: 0.55, glow: 0.4 },                  // 塞いでいる板が一瞬光る（1回。色を寄せる割合と光の強さ）
+  chain: { window: 2600, max: 4 },                              // 前の箱が閉まってからこの時間（ms）のうちに閉まると連鎖。数えるのは max まで
+  clear: { pause: 520, rain: 2300, drops: [14, 24, 36] },       // クリア: カードを出すまでの間・ねじの雨が降りきる時間・★1〜3 の粒の数
 };
 
 const clamp01 = (k) => Math.min(1, Math.max(0, k));
@@ -45,6 +52,56 @@ export function unscrewPose(k, r) {
     angle: (2 * Math.PI * L) / pitch + spinAtRelease * (1 - engaged) * u * (1 - u / 2),
     scale: 1 + swell * Math.sin(u * Math.PI / 2),
   };
+}
+
+// 押し込み: 沈んだ深さ（× r）。press は指が触れてからの k、release は離してからの k（沈んだ所 from から、少し行き過ぎて戻る）
+export function pressDepth(k) {
+  return FX.press.depth * easeOut(clamp01(k));
+}
+export function releaseDepth(k, from = FX.press.depth) {
+  k = clamp01(k);
+  return from * ((1 - k) * (1 - k) - 0.35 * Math.sin(Math.PI * k) * (1 - k));
+}
+
+// 塞いでいる板が一瞬光る: 0〜1 の強さ（前半で強まり、後半で消える。1回だけ）
+export function blockerFlash(k) {
+  k = clamp01(k);
+  return Math.sin(Math.PI * k) ** 2;
+}
+
+// 箱の連鎖: 前の箱が閉まった時刻 last（無ければ null）と前の連鎖の数 n から、今閉まった箱が何連鎖目か（1 から、max まで）
+export function chainStep(n, last, now) {
+  const { window: w, max } = FX.chain;
+  return last != null && now - last <= w ? Math.min(max, n + 1) : 1;
+}
+
+// 連鎖のふた: 1 は ✓、2 からは星をその数だけ
+export const lidMark = (n) => (n >= 2 ? '★'.repeat(Math.min(n, FX.chain.max)) : '✓');
+
+// 箱から散らす星の数と広がり（連鎖が増えると多く、遠くへ）
+export function sparkOf(n) {
+  n = Math.max(1, Math.min(n, FX.chain.max));
+  return { count: 6 + 4 * (n - 1), reach: 1 + 0.25 * (n - 1) };
+}
+
+// クリアのねじの雨: 星の数で粒を増やす。返り値は粒ごとの { x: 画面の横の割合, delay, ms, turns, drift: 横へ流れる割合, size, color: 色の番号 }。
+// 乱数は使わず、黄金比で散らす（毎回同じ降り方。スクリーンショットで比べられる）
+export function rainDrops(stars, colors = 1) {
+  const n = FX.clear.drops[Math.max(1, Math.min(3, stars)) - 1];
+  const g = 0.6180339887;
+  return Array.from({ length: n }, (_, i) => {
+    const u = (i * g) % 1, v = (i * g * g + 0.37) % 1;
+    const ms = FX.clear.rain * (0.5 + 0.3 * v);
+    return {
+      x: 0.04 + 0.92 * u,
+      delay: (FX.clear.rain - ms) * ((i / n + v * 0.3) % 1) * 0.6,   // 前寄せにして、カードが出る頃には画面じゅうに散っている
+      ms,
+      turns: (v < 0.5 ? -1 : 1) * (0.6 + v),
+      drift: (u - 0.5) * 0.12,
+      size: 0.8 + 0.5 * v,
+      color: i % colors,
+    };
+  });
 }
 
 // 板がはじける: 膨らみ（大きさの倍率）と光（0〜glow）。終わりで元に戻る

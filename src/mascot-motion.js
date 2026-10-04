@@ -3,7 +3,9 @@
 //
 // 動き（action）:
 //   idle   待機。小さく弾んで揺れ、ときどき瞬きする（縦長の大きな瞳）
-//   win    成功（クリア）。^ ^ の目でバンザイして、1回転しながら3回跳ぶ。跳び終えたら ^ ^ のままバンザイで待つ
+//   win    成功（クリア ★3）。^ ^ の目でバンザイして、1回転しながら3回跳ぶ。跳び終えたら ^ ^ のままバンザイで待つ
+//   win2   成功（クリア ★2）。^ ^ の目でレンチを高く掲げ、回らずに2回跳ぶ。跳び終えたらレンチを掲げて揺れる
+//   win1   成功（クリア ★1）。開いた目で「ふう」と小さく1回跳び、空いた手で額をぬぐう。その後は待機の顔で小さく揺れる
 //   lose   失敗（詰み）。× の目でぶるっと震え、頭を傾けてうなだれ、汗が垂れる。そのまま待つ
 //   joy    小さな喜び（箱が満杯）。^ ^ の目で片手を上げて小さく跳ぶ
 //   flinch 外せないねじをタップした。困り眉で首を小さく振る
@@ -17,7 +19,10 @@ export const CUE_ACTION = {
   blocked: 'flinch',
   full: 'flinch',
 };
-export const cueAction = (cue) => CUE_ACTION[cue] ?? null;
+// クリアは星の数で喜び方を変える（E5）。opts.stars が無ければ ★3 の動き
+export const STAR_WIN = { 1: 'win1', 2: 'win2', 3: 'win' };
+export const cueAction = (cue, opts = {}) =>
+  cue === 'cleared' && opts.stars ? STAR_WIN[Math.max(1, Math.min(3, opts.stars))] : CUE_ACTION[cue] ?? null;
 
 // 動きの長さ（秒）。hold は終わった後もその動きのまま待つもの。rank が高い動きは低い動きに割り込まれない
 export const ACTIONS = {
@@ -25,6 +30,8 @@ export const ACTIONS = {
   flinch: { s: 0.45, hold: false, rank: 1 },
   joy: { s: 0.75, hold: false, rank: 2 },
   win: { s: 3.3, hold: true, rank: 3 },
+  win2: { s: 2.2, hold: true, rank: 3 },
+  win1: { s: 1.6, hold: true, rank: 3 },
   lose: { s: 1.1, hold: true, rank: 3 },
 };
 export const WIN_JUMP = 1.1;     // 1回の跳びの長さ（秒）。最初の跳びで1回転する
@@ -83,6 +90,35 @@ export function mascotPose(action, t, clock = t, still = false) {
       p.armR[0] += Math.sin(clock * 6) * 0.08;
       p.armL[0] -= Math.sin(clock * 6) * 0.08;
     }
+  } else if (action === 'win2') {
+    p.face = 'happy';
+    p.mouth = 'big';
+    p.blink = false;
+    // レンチを高く掲げ（右手を真上近くへ）、左手は横へ開く
+    p.armR = [2.3, 0.3, -0.2];
+    p.armL = [-1.1, 0.2, 0];
+    if (t < ACTIONS.win2.s) {
+      const k = (t % WIN_JUMP) / WIN_JUMP;
+      p.y = Math.sin(k * Math.PI) * 0.3;
+      p.squash = k < 0.1 ? 1 - (0.1 - k) * 1.0 : 1 + Math.sin(k * Math.PI) * 0.03;
+      p.legSwing = Math.sin(k * Math.PI) * 0.25;
+    } else {
+      p.y = Math.abs(Math.sin(clock * 2.6)) * 0.04;
+      p.sway = Math.sin(clock * 2.6) * 0.06;
+      p.armR[0] += Math.sin(clock * 5.2) * 0.1;
+    }
+  } else if (action === 'win1') {
+    // 「ふう」: 小さく1回跳び、空いた左手を額へ持っていく
+    p.mouth = 'open';
+    p.blink = false;
+    const hop = t < 0.7 ? Math.sin((t / 0.7) * Math.PI) : 0;
+    p.face = t < 0.7 ? 'happy' : 'open';
+    p.y = hop * 0.16;
+    p.squash = t < 0.07 ? 1 - (0.07 - t) * 0.8 : p.squash;
+    p.legSwing = hop * 0.18;
+    const wipe = smooth((t - 0.6) / 0.35) * (1 - smooth((t - 1.35) / 0.25));
+    p.armL = [ARM_L[0] - wipe * 2.3, wipe * 0.9, 0];
+    p.headSide = wipe * 0.08 * Math.sin(t * 9);
   } else if (action === 'lose') {
     p.face = 'x';
     p.brows = 'worried';
@@ -137,8 +173,8 @@ export function createMascotState(start = 0) {
       t0 = now;
       return true;
     },
-    react(cue, now) {
-      const next = cueAction(cue);
+    react(cue, now, opts) {
+      const next = cueAction(cue, opts);
       return next ? api.play(next, now) : false;
     },
     reset(now) {

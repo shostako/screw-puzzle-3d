@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, batchDuration, groundOf, pitchOf, THREAD_TURNS } from '../src/effects.js';
+import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, batchDuration, groundOf, pitchOf, THREAD_TURNS, pressDepth, releaseDepth, blockerFlash, chainStep, lidMark, sparkOf, rainDrops } from '../src/effects.js';
 import { BOLT, buildBoard } from '../src/scene.js';
 import { SCREW_RADIUS } from '../src/board.js';
 import { stageLevel } from '../src/stages.js';
@@ -81,6 +81,66 @@ describe('板と箱', () => {
     const f = flyFrames([10, 500], [100, 60], 1.4);
     expect(f[0].transform).toBe('translate(10px, 500px) rotate(0deg) scale(1.4)');
     expect(f.at(-1).transform).toBe(`translate(100px, 60px) rotate(${FX.fly.turns * 360}deg) scale(1)`);
+  });
+});
+
+describe('手触り（E5）', () => {
+  it('押し込み: 触れると沈み、離すと少し行き過ぎてから元の位置に戻る', () => {
+    expect(pressDepth(0)).toBe(0);
+    expect(pressDepth(1)).toBeCloseTo(FX.press.depth, 9);
+    for (let k = 0.1; k <= 1; k += 0.1) expect(pressDepth(k)).toBeGreaterThan(pressDepth(k - 0.1));
+    expect(releaseDepth(0)).toBeCloseTo(FX.press.depth, 9);
+    expect(releaseDepth(1)).toBeCloseTo(0, 9);
+    const ks = Array.from({ length: 41 }, (_, i) => i / 40);
+    expect(Math.min(...ks.map((k) => releaseDepth(k)))).toBeLessThan(0);   // 戻るときに少し浮く（ばね）
+    // 沈む深さは頭の高さのごく一部（ねじ頭が板に埋まって見えない）
+    expect(FX.press.depth).toBeLessThan(0.3);
+    // 沈みきる前に離したら、そこから戻る
+    expect(releaseDepth(0, pressDepth(0.3))).toBeCloseTo(pressDepth(0.3), 9);
+  });
+
+  it('塞いでいる板の光は1回だけ強まって消え、タップの手応えより長く残らない', () => {
+    expect(blockerFlash(0)).toBe(0);
+    expect(blockerFlash(0.5)).toBeCloseTo(1, 9);
+    expect(blockerFlash(1)).toBeCloseTo(0, 9);
+    expect(FX.blocker.ms).toBeLessThanOrEqual(600);
+  });
+
+  it('箱の連鎖: 前の箱から間もなく閉まると数が増え、間が空くと 1 に戻る。上限で止まる', () => {
+    let n = chainStep(0, null, 1000);
+    expect(n).toBe(1);
+    n = chainStep(n, 1000, 1000 + FX.chain.window - 1);
+    expect(n).toBe(2);
+    for (let i = 0; i < 10; i++) n = chainStep(n, 0, 10);
+    expect(n).toBe(FX.chain.max);
+    expect(chainStep(n, 0, FX.chain.window + 1)).toBe(1);
+  });
+
+  it('連鎖のふたは 2 から星が増え、散る星も多く遠くなる', () => {
+    expect(lidMark(1)).toBe('✓');
+    expect(lidMark(2)).toBe('★★');
+    expect(lidMark(9)).toBe('★'.repeat(FX.chain.max));
+    expect(sparkOf(1)).toEqual({ count: 6, reach: 1 });
+    expect(sparkOf(3).count).toBeGreaterThan(sparkOf(2).count);
+    expect(sparkOf(3).reach).toBeGreaterThan(sparkOf(2).reach);
+  });
+
+  it('クリアのねじの雨: 星が多いほど粒が多く、どの粒も降りきる時間のうちに画面を抜ける', () => {
+    const [a, b, c] = [1, 2, 3].map((s) => rainDrops(s, 4));
+    expect(a.length).toBeLessThan(b.length);
+    expect(b.length).toBeLessThan(c.length);
+    for (const d of c) {
+      expect(d.x).toBeGreaterThanOrEqual(0);
+      expect(d.x).toBeLessThanOrEqual(1);
+      expect(d.delay).toBeGreaterThanOrEqual(0);
+      expect(d.delay + d.ms).toBeLessThanOrEqual(FX.clear.rain + 1e-9);
+      expect(d.color).toBeLessThan(4);
+    }
+    // 毎回同じ降り方（スクリーンショットで比べられる）
+    expect(rainDrops(3, 4)).toEqual(c);
+    // カードを出すまでの間は 0.5 秒ほど
+    expect(FX.clear.pause).toBeGreaterThanOrEqual(400);
+    expect(FX.clear.pause).toBeLessThanOrEqual(700);
   });
 });
 

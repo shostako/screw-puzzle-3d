@@ -21,7 +21,7 @@ import { createSettings, clearRecords, SPEEDS, QUALITIES } from './settings.js';
 import { randomLevel, dailyLevel, DIFFICULTIES, DIFFICULTY_IDS, MAX_RANDOM, isRandomNo, dateKey, isDateKey, dateLabel, dailyBestKey } from './random.js';
 import { rate, clock, createPlayClock, createBests, MAX_STARS } from './rating.js';
 import { createFeedback, tapCue, eventCue, endCue } from './feedback.js';
-import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf } from './effects.js';
+import { FX, unscrewPose, burstPose, dropPose, flyFrames, boxCloseTimeline, groundOf, pressDepth, releaseDepth, blockerFlash, chainStep, lidMark, sparkOf, rainDrops } from './effects.js';
 import { TIPS, MIN_MS, MAX_MS, TURN_RAD, startTips, tapTips, labelScrews, createTutorialStore, tutorialEnabled } from './tutorial.js';
 
 // 起動の画面（E3）。物理の wasm を読む fetch を見張るので、物理の準備（start）より先に作る
@@ -353,6 +353,7 @@ function runTweens() {
 // ねじが回りながら抜ける（右ねじなので頭から見て反時計回り、1回転でピッチ1つ分）。抜けきったら resolve する。
 // 消すのはここではなく、箱やスロットへ飛ばす直前（launch）。外したねじは画面に1本しか出さない
 function unscrew(obj) {
+  settleScrew(obj);
   const p0 = obj.position.clone();
   const out = new THREE.Vector3(0, 1, 0).applyQuaternion(obj.quaternion);
   const q0 = obj.quaternion.clone();
@@ -386,6 +387,7 @@ function launch(obj, color) {
 // 隠れたねじは震えて拒否する
 function shake(obj) {
   if (obj.userData.shaking) return;
+  settleScrew(obj);
   obj.userData.shaking = true;
   const p0 = obj.position.clone();
   const side = new THREE.Vector3(1, 0, 0).applyQuaternion(obj.quaternion);
@@ -395,6 +397,64 @@ function shake(obj) {
     obj.position.copy(p0);
     obj.userData.shaking = false;
   });
+}
+
+// 押し込み（E5）: 指が触れた瞬間に、指の下のねじ頭をわずかに沈める。離すか回し始めたら、少し行き過ぎて戻る。
+// タップで外れるねじや震えるねじは、その演出の前に元の位置へ戻す（settleScrew）
+let pressedObj = null;
+function settleScrew(obj) {
+  const p = obj.userData.press;
+  if (!p) return;
+  tweens.delete(p.t);
+  obj.position.copy(p.home);
+  obj.userData.press = null;
+  requestRender();
+}
+function pressScrew(obj) {
+  if (pressedObj && pressedObj !== obj) releaseScrew();
+  if (obj.userData.shaking) return;
+  settleScrew(obj);
+  const p = { home: obj.position.clone(), out: new THREE.Vector3(0, 1, 0).applyQuaternion(obj.quaternion), r: obj.userData.radius, depth: 0 };
+  p.t = tween(FX.press.ms, (k) => {
+    p.depth = pressDepth(k);
+    obj.position.copy(p.home).addScaledVector(p.out, -p.depth * p.r);
+  });
+  obj.userData.press = p;
+  pressedObj = obj;
+}
+function releaseScrew() {
+  const obj = pressedObj;
+  pressedObj = null;
+  const p = obj?.userData.press;
+  if (!p) return;
+  tweens.delete(p.t);
+  const from = p.depth;
+  p.t = tween(FX.press.back, (k) => {
+    obj.position.copy(p.home).addScaledVector(p.out, -releaseDepth(k, from) * p.r);
+  }, () => {
+    if (obj.userData.press === p) settleScrew(obj);
+  });
+}
+
+// 外せないねじ（隠れている）をタップしたとき、塞いでいる板を一瞬だけ水色に光らせて理由を見せる（E5）。
+// 子の部品が付いている（held）ときの橙（glowHolders）とは別の色。材質は板ごとに1つなので描く回数は増えない
+function flashBlockers(ids) {
+  for (const id of ids) {
+    const obj = board.plates.get(id);
+    if (!obj || obj.userData.glowing || obj.parent !== board.root) continue;
+    obj.userData.glowing = true;
+    const mat = obj.material, base = mat.color.clone(), col = new THREE.Color(THEME.blocker);
+    tween(FX.blocker.ms, (k) => {
+      const w = blockerFlash(k);
+      mat.color.copy(base).lerp(col, FX.blocker.tint * w);
+      mat.emissive.copy(col).multiplyScalar(FX.blocker.glow * w);
+    }, () => {
+      mat.color.copy(base);
+      mat.emissive.setScalar(0);
+      obj.userData.glowing = false;
+    });
+  }
+  requestRender();
 }
 
 // 最後のねじが抜けた板は、ぷくっと膨らんで白く光る（はじける）。見た目だけで、物理の形や動きは変えない。
@@ -531,19 +591,36 @@ function puff(at, px, color) {
   el.addEventListener('animationend', () => el.remove());
 }
 
-// 満杯の箱から星を散らす
-function sparkle(el) {
+// 満杯の箱から星を散らす。連鎖（E5）が増えるほど多く、遠くへ
+function sparkle(el, chain = 1) {
   const [x, y] = centerOf(el);
-  for (let i = 0; i < 6; i++) {
+  const { count, reach } = sparkOf(chain);
+  for (let i = 0; i < count; i++) {
     const s = document.createElement('div');
     s.className = 'spark';
-    const a = (i / 6) * Math.PI * 2 + 0.3;
+    const a = (i / count) * Math.PI * 2 + 0.3;
+    const far = reach * (i % 2 ? 1 : 0.8);
     s.style.left = `${x}px`;
     s.style.top = `${y}px`;
-    s.style.setProperty('--dx', `${Math.cos(a) * 46}px`);
-    s.style.setProperty('--dy', `${Math.sin(a) * 30}px`);
+    s.style.setProperty('--dx', `${Math.cos(a) * 46 * far}px`);
+    s.style.setProperty('--dy', `${Math.sin(a) * 30 * far}px`);
     $('flyers').append(s);
     s.addEventListener('animationend', () => s.remove());
+  }
+}
+
+// クリアのねじの雨（E5）: このステージのねじの色の印を、画面の上から回しながら降らせる。星が多いほど多く
+function rain(stars) {
+  const colors = [...new Set(LEVEL.screws.map((s) => s.color))];
+  const W = window.innerWidth, H = window.innerHeight;
+  for (const d of rainDrops(stars, colors.length)) {
+    const el = dot(colors[d.color]);
+    el.classList.add('flyer', 'drop');
+    $('rain').append(el);
+    const x = d.x * W, t = (y, x, a) => ({ transform: `translate(${x}px, ${y}px) rotate(${a}deg) scale(${d.size})` });
+    el.animate([t(-40, x, 0), t(H + 40, x + d.drift * W, d.turns * 360)],
+      { duration: d.ms, delay: d.delay, easing: 'cubic-bezier(0.35, 0, 0.75, 0.9)', fill: 'both' })
+      .finished.then(() => el.remove(), () => el.remove());
   }
 }
 
@@ -592,6 +669,7 @@ document.addEventListener('visibilitychange', () => {
 let hud = hudOf(game.state);   // いま画面に出している箱とスロット（演出の途中の様子）
 let queue = [];                // まだ見せていない出来事のまとまり { events, obj（外したねじ）, out（抜けきったら resolve）, status }
 let playing = false;
+let chain = 0, lastBoxAt = null;   // 箱の連鎖（E5）: 何連鎖目か・前の箱が閉まった時刻（演出の時計）
 let generation = 0;            // やり直しで古い演出を捨てるための番号
 
 function screenOfPoint(world) {
@@ -628,14 +706,19 @@ async function play() {
         await fly(colorOf.get(ev.screw), from, to, FX.fly.slotMs * fast, 1);
       } else if (ev.type === 'boxFull') {
         // ふたが閉まりきる瞬間に音と振動、星を散らして箱は上へ抜ける
+        // 前の箱が閉まってから間もなく閉まったら連鎖（E5）: ふたの星を増やし、音程を上げ、星を多く散らす
         const el = boxesEl.children[ev.box];
         const tl = boxCloseTimeline(fast);
+        chain = chainStep(chain, lastBoxAt, fxClock() + tl.cue);
+        lastBoxAt = fxClock() + tl.cue;
+        el.dataset.lid = lidMark(chain);
+        el.classList.toggle('chain', chain >= 2);
         await wait(tl.lid);
         el.classList.add('closing');
         await wait(tl.cue - tl.lid);
         if (gen !== generation) break;
-        cue('boxFull');
-        sparkle(el);
+        cue('boxFull', { chain });
+        sparkle(el, chain);
         await wait(tl.leave - tl.cue);
         el.classList.add('done');
         await wait(tl.end - tl.leave);
@@ -649,9 +732,19 @@ async function play() {
       if (ev.type === 'boxSpawn') await wait(FX.box.spawn * fast);
     }
     if (gen === generation && batch.obj.visible) launch(batch.obj);   // 箱にもスロットにも飛ばなかったときの念のため
-    if (gen === generation && batch.status !== 'playing' && !queue.length) showEnd(batch.status);
+    if (gen === generation && batch.status !== 'playing' && !queue.length) await finish(batch.status, gen);
   }
   if (gen === generation) playing = false;
+}
+
+// 決着の後: クリアなら、ねじの雨を降らせて少し間を置いてからカードを出す（E5）。詰みはすぐに出す
+async function finish(status, gen) {
+  if (status === 'cleared') {
+    rain(ratingNow().stars);
+    await wait(FX.clear.pause);
+    if (gen !== generation) return;
+  }
+  showEnd(status);
 }
 
 function tapScrew(id) {
@@ -661,6 +754,7 @@ function tapScrew(id) {
   coachAfterTap(r);
   if (r.reason === 'blocked') {
     shake(obj);
+    flashBlockers(blockersOf(id));
     const by = movableBlockers(id);
     say(by === 'loose' ? '落ちた板に隠れている。回して払い落とそう'
       : by === 'hanging' ? 'ぶら下がった板に隠れている。回して動かそう'
@@ -693,11 +787,16 @@ function tapScrew(id) {
   return r.reason;
 }
 
+// ねじの抜ける道を塞いでいる板（今の姿勢で）
+function blockersOf(id) {
+  const present = new Set(physics.present());
+  return sweepHits(LEVEL, id, { plates: LEVEL.plates.filter((p) => present.has(p.id)), poses: physics.poses() });
+}
+
 // ねじを隠しているのが動ける板だけなら、その種類（落ちた板があれば 'loose'、ぶら下がりだけなら 'hanging'）。
 // 固定の板にも隠れていれば null（回しても外せない）
 function movableBlockers(id) {
-  const present = new Set(physics.present());
-  const hits = sweepHits(LEVEL, id, { plates: LEVEL.plates.filter((p) => present.has(p.id)), poses: physics.poses() });
+  const hits = blockersOf(id);
   const modes = hits.map((p) => physics.mode(p));
   if (!hits.length || modes.includes('fixed')) return null;
   return modes.includes('loose') ? 'loose' : 'hanging';
@@ -772,7 +871,9 @@ function showEnd(status) {
   ov.className = status;
   const cleared = status === 'cleared';
   seatMascot(true);
-  cue(endCue(status));
+  // クリアの合図は星の数を添える（ネジまるが ★ごとに喜び方を変える。E5）
+  const rating = cleared ? ratingNow() : null;
+  cue(endCue(status), rating ? { stars: rating.stars } : undefined);
   // クリアしたらその場で次のステージを保存する（ボタンを押す前に閉じても、次は続きから）
   const before = progress.stage;
   if (cleared && mode.type === 'stage') progress.cleared(stage);
@@ -780,8 +881,8 @@ function showEnd(status) {
     : mode.type === 'stage' ? `ステージ ${stage} クリア！`
     : mode.type === 'daily' ? '今日の1問 クリア！'
     : 'クリア！';
-  $('end-text').textContent = cleared ? 'すべての箱を埋めた' : '外せるねじが無くなった';
-  showRating(cleared);
+  $('end-text').textContent = cleared ? 'すべての箱を埋めた' : '外せるねじが無くなった。戻ってやり直そう';
+  showRating(cleared, rating);
   // 章の 10 番目を初めてクリアしたら、章の星の合計と次の章の予告（E9）。「次へ」で次の章の頭をお披露目して開く
   const chapterDone = cleared && mode.type === 'stage' && !freePlay && finishesChapter(stage, before);
   showChapterEnd(chapterDone);
@@ -799,16 +900,21 @@ function showEnd(status) {
   showUndo();
 }
 
+// いまクリアしたら付く星（記録はしない）
+function ratingNow() {
+  return rate({ screws: LEVEL.screws.length, seconds: playClock.seconds, hints: tally.hints, rewinds: tally.rewinds });
+}
+
 // クリアの星と時間、自己ベスト。詰みでは出さない
 let lastRating = null;
-function showRating(cleared) {
+function showRating(cleared, rated = null) {
   const starsEl = $('end-stars');
   const scoreEl = $('end-score');
   starsEl.hidden = !cleared;
   scoreEl.hidden = !cleared;
   if (!cleared) return;
   const seconds = playClock.seconds;
-  const r = rate({ screws: LEVEL.screws.length, seconds, hints: tally.hints, rewinds: tally.rewinds });
+  const r = rated ?? ratingNow();
   lastRating = { ...r, seconds, hints: tally.hints, rewinds: tally.rewinds, best: null };
   starsEl.setAttribute('aria-label', `星 ${r.stars} つ`);
   starsEl.replaceChildren(...Array.from({ length: MAX_STARS }, (_, i) => {
@@ -865,7 +971,7 @@ function showChapterEnd(on) {
   if (done.perfect) el.querySelector('.ce-stars').insertAdjacentHTML('afterbegin', CROWN_SVG);
   const g = generation;
   wait(ACTIONS_WIN_MS).then(() => {
-    if (g === generation && !$('overlay').hidden) mascot.react('cleared');
+    if (g === generation && !$('overlay').hidden) mascot.react('cleared', { stars: lastRating?.stars });
   });
   confetti($('overlay').querySelector('.card'));
 }
@@ -1078,8 +1184,12 @@ function rebuildBoard() {
   hideCoach();
   queue = [];
   playing = false;
+  pressedObj = null;
+  chain = 0;
+  lastBoxAt = null;
   for (const t of tweens) tweens.delete(t);
   $('flyers').replaceChildren();
+  $('rain').replaceChildren();
   if (board) {
     model.remove(board.root);
     for (const p of board.plates.values()) if (p.parent === scene) scene.remove(p);
@@ -1233,10 +1343,14 @@ function resumeFrom(record) {
 }
 let resumed = null;   // 続きから戻したときの様子（スクリーンショットのスクリプトが見る）
 
+// 詰み・行き止まりのカード（E5）: 「戻る」（解ける所まで）と「ヒント」（戻ってから次の一手）を大きく並べ、1手戻すとやり直すは控えめに
+const rewindNote = (text) => { $('rewind').querySelector('small').textContent = text; };
 function showRewindButtons(on) {
   $('rewind').hidden = !on;
   $('rewind').disabled = false;
-  $('rewind').textContent = '解ける所まで戻る';
+  rewindNote('解ける所まで');
+  $('end-hint').hidden = !on;
+  $('end-hint').disabled = false;
   $('back1').hidden = !on;
 }
 
@@ -1256,7 +1370,8 @@ async function rewindToSolvable() {
   if (loading || !game.canUndo) return;
   const btn = $('rewind');
   btn.disabled = true;
-  btn.textContent = '戻る先を探しています…';
+  $('end-hint').disabled = true;
+  rewindNote('探しています…');
   await wait(30);   // 文字を描いてから探す
   safe ??= safeBlocker(LEVEL);
   const before = game.moves;
@@ -1331,11 +1446,23 @@ function visibleScrews() {
   return out;
 }
 
+// 指の位置のねじ（当たったねじか、近くに見えているねじ）
+function screwAt(x, y) {
+  const hit = castAt(x, y);
+  return (hit && screwIdOf(hit.object)) || nearestScrew(visibleScrews(), x, y);
+}
+
 function onTap(x, y) {
   if (!$('overlay').hidden) return;
-  const hit = castAt(x, y);
-  const id = (hit && screwIdOf(hit.object)) || nearestScrew(visibleScrews(), x, y);
+  const id = screwAt(x, y);
   if (id) tapScrew(id);
+}
+
+// 指が触れた瞬間に、指の下のねじを沈める（押し込み、E5）。外せるかどうかに関わらず沈める（タップで外すかはまだ分からない）
+function pressAt(x, y) {
+  if (!$('overlay').hidden || loading || game.status !== 'playing') return;
+  const id = screwAt(x, y);
+  if (id && game.state.where[id] === 'board') pressScrew(board.screws.get(id));
 }
 
 // ---- 指の操作 ----
@@ -1348,9 +1475,11 @@ let pinched = false;
 function handle(events, t) {
   for (const e of events) {
     if (e.type === 'rotate') {
+      if (pressedObj) releaseScrew();   // 回し始めたら、沈めたねじを戻す
       rotateBy(e.dx, e.dy);
       if (!pinched) inertia.push(e.dx, e.dy, t);
     } else if (e.type === 'zoom') {
+      if (pressedObj) releaseScrew();
       pinched = true;
       zoomBy(e.scale);
     } else if (e.type === 'tap') {
@@ -1368,12 +1497,15 @@ canvas.addEventListener('pointerdown', (e) => {
     pinched = false;
   }
   handle(gesture.down(e.pointerId, e.clientX, e.clientY, e.timeStamp), e.timeStamp);
+  if (gesture.activePointers === 1 && !caught) pressAt(e.clientX, e.clientY);
+  else if (pressedObj) releaseScrew();
 });
 canvas.addEventListener('pointermove', (e) => {
   handle(gesture.move(e.pointerId, e.clientX, e.clientY, e.timeStamp), e.timeStamp);
 });
 canvas.addEventListener('pointerup', (e) => {
   handle(gesture.up(e.pointerId, e.clientX, e.clientY, e.timeStamp), e.timeStamp);
+  if (pressedObj) releaseScrew();   // タップで外れたねじは、外す演出の前に元へ戻している
   // 全部の指が離れたら、離す直前の速さで惰性を付ける（ピンチを含んだ操作では付けない）
   if (gesture.activePointers === 0) {
     if (!pinched && inertia.release(e.timeStamp)) {
@@ -1384,6 +1516,7 @@ canvas.addEventListener('pointerup', (e) => {
 });
 canvas.addEventListener('pointercancel', (e) => {
   handle(gesture.cancel(e.pointerId), e.timeStamp);
+  if (pressedObj) releaseScrew();
   if (gesture.activePointers === 0) inertia.stop();
 });
 // PC で試すとき用: ホイールで寄り引き
@@ -1416,7 +1549,7 @@ const mascot = createMascot($('mascot'), {
 });
 function cue(name, opts) {
   feedback.cue(name, opts);
-  if (name) mascot.react(name);
+  if (name) mascot.react(name, opts);
 }
 // 終わりの画面では、ネジまるをカードの上に大きく乗せる（成功・失敗の動きを見せる）。やり直すと左下へ戻す
 function seatMascot(onCard) {
@@ -1657,6 +1790,11 @@ for (const d of DIFFICULTY_IDS) $(`m-${d}`).addEventListener('click', () => pick
 $('undo').addEventListener('click', undoOne);
 $('back1').addEventListener('click', undoOne);
 $('rewind').addEventListener('click', rewindToSolvable);
+// 戻ってからヒント: 解ける所まで戻し、そこから次に外すねじに金色の輪を出す（分かれ目の赤い輪の代わりに）
+$('end-hint').addEventListener('click', async () => {
+  await rewindToSolvable();
+  if (game.status === 'playing' && $('overlay').hidden) showHint();
+});
 $('resume').addEventListener('click', () => {
   $('overlay').hidden = true;
   showUndo();
@@ -1825,6 +1963,15 @@ window.__app = {
   screenOf: (id) => screenOf(board.screws.get(id)),
   screwShown: (id) => board.screws.get(id).visible,
   screw: (id) => board.screws.get(id),
+  // 押し込み（E5）: 沈めているねじと深さ（× r）。無ければ null
+  get pressed() {
+    const p = pressedObj?.userData.press;
+    return p ? { id: pressedObj.userData.screwId, depth: p.depth } : null;
+  },
+  // 箱の連鎖（E5）: 最後に閉まった箱が何連鎖目か
+  get chain() { return chain; },
+  // ねじの抜ける道を塞いでいる板（E5 の理由の光）
+  blockersOf,
   // 演出の途中を撮るため: 演出の時計を遅くする（0 で止める）。CSS のアニメーションも止める・戻す
   timeScale(k) {
     setTimeScale(k);

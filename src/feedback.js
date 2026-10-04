@@ -8,7 +8,7 @@
 //   full     待機スロットがいっぱいで外せない
 //   box      ねじが箱に入った（スロットから移ったときも）
 //   slot     ねじが待機スロットに入った
-//   boxFull  箱が満杯になった
+//   boxFull  箱が満杯になった（opts.chain で連鎖の数。2 からきらめきの音程が上がる）
 //   plate    板が外れて落ち始めた
 //   cleared  クリア
 //   stuck    詰み
@@ -120,6 +120,19 @@ const bell = (at, n, d, gain) => [
   { at, f: MIDI(n) * 4, d: d * 0.35, wave: 'sine', gain: gain * 0.22, attack: 0.002 },
 ];
 
+// 箱が閉まる音。chain（連鎖の数、E5）が増えるごとに、きらめきを全音（2 半音）ずつ上げ、2 からは3つ目の音で駆け上がる
+export const CHAIN_STEP = 2;
+function boxFull(chain) {
+  const up = CHAIN_STEP * (Math.max(1, Math.min(4, chain)) - 1);
+  return [
+    { at: 0, f: 210, to: 95, d: 0.1, wave: 'sine', gain: 0.8, attack: 0.002 },
+    { at: 0, d: 0.06, noise: 'lowpass', f: 1400, q: 0.8, gain: 0.45 },
+    ...bell(0.08, 84 + up, 0.22, 0.32),
+    ...bell(0.15, 91 + up, 0.3, 0.3),
+    ...(chain >= 2 ? bell(0.22, 96 + up, 0.34, 0.26) : []),
+  ];
+}
+
 export const SOUNDS = {
   // カチカチと回って、最後にポンと抜ける
   unscrew: [
@@ -139,12 +152,7 @@ export const SOUNDS = {
     { at: 0, f: 620, to: 480, d: 0.08, wave: 'sine', gain: 0.6, attack: 0.002 },
   ],
   // 箱が閉まるパタン、続けて小さなきらめき
-  boxFull: [
-    { at: 0, f: 210, to: 95, d: 0.1, wave: 'sine', gain: 0.8, attack: 0.002 },
-    { at: 0, d: 0.06, noise: 'lowpass', f: 1400, q: 0.8, gain: 0.45 },
-    ...bell(0.08, 84, 0.22, 0.32),
-    ...bell(0.15, 91, 0.3, 0.3),
-  ],
+  boxFull: boxFull(1),
   plate: plate(PLATE_PITCH.ref),
   // 隠れていて外せない: 鈍いコツコツ
   blocked: [
@@ -172,9 +180,10 @@ export const SOUNDS = {
   ],
 };
 
-// 合図の音（opts で形を変えるもの: plate は opts.size で音程）
+// 合図の音（opts で形を変えるもの: plate は opts.size で音程、boxFull は opts.chain で連鎖）
 export function soundOf(name, opts = {}) {
   if (name === 'plate' && opts.size != null) return plate(opts.size);
+  if (name === 'boxFull' && opts.chain > 1) return boxFull(opts.chain);
   return SOUNDS[name] ?? [];
 }
 

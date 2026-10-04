@@ -422,7 +422,7 @@ export function createMascot(canvas, { clock = () => performance.now(), environm
   };
   return {
     // 合図（feedback.js の cue の名前）を受ける。動くなら true
-    react: (cue) => played(state.react(cue, clock()), cueAction(cue)),
+    react: (cue, opts) => played(state.react(cue, clock(), opts), cueAction(cue, opts)),
     play: (action) => played(state.play(action, clock()), action),
     history,
     reset: () => state.reset(clock()),
